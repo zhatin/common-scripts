@@ -1,0 +1,1 @@
+find . -name "C*.000" -print0 | xargs -0 -I {} ogr2ogr -f 'PostgreSQL' PG:'dbname=seamap host=localhost user=postgres password=postgres' -t_srs EPSG:4326 -overwrite -nlt GEOMETRY -unsetFieldWidth -skipfailures {}
