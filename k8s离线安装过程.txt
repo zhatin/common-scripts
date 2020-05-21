@@ -1,0 +1,761 @@
+
+修改/etc/hosts文件
+10.224.47.161   master01
+10.224.47.162   worker01
+10.224.47.163   worker02
+10.224.47.164   worker03
+
+设置时区
+timedatectl set-timezone Asia/Shanghai
+
+设置主机名
+hostnamectl set-hostname master01
+hostnamectl set-hostname worker01
+hostnamectl set-hostname worker02
+hostnamectl set-hostname worker03
+
+修改/etc/selinux/config
+sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
+setenforce 0
+
+关闭防火墙
+systemctl disable firewalld
+systemctl stop firewalld
+
+设置内核参数
+vi /etc/sysctl.d/k8s.conf
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+
+sysctl --system
+
+关闭交换分区
+swapoff -a
+sed -e '/swap/s/^/#/g' -i /etc/fstab
+
+上传Docker离线安装包docker.tar.gz
+安装Docker
+rpm -Uvh --replacefiles --replacepkgs --nodeps --force *.rpm
+systemctl enable docker
+systemctl start docker
+
+修改Docker参数
+vi /etc/docker/daemon.json
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2",
+  "storage-opts": [
+    "overlay2.override_kernel_check=true"
+  ]
+}
+
+systemctl daemon-reload
+systemctl restart docker
+
+上传k8s离线安装包k8s.tar.gz
+安装kubeadm
+rpm -Uvh --replacefiles --replacepkgs --nodeps --force *.rpm
+
+systemctl enable kubelet
+systemctl start kubelet
+
+导入镜像
+docker load -i coredns.tar 
+docker load -i etcd.tar 
+docker load -i flannel.tar
+docker load -i kube-apiserver.tar 
+docker load -i kube-controller-manager.tar 
+docker load -i kube-proxy.tar 
+docker load -i kube-scheduler.tar 
+docker load -i pause.tar
+
+初始化master 
+kubeadm init --pod-network-cidr=10.244.0.0/16
+-----------------------------------------------------------
+Your Kubernetes control-plane has initialized successfully!
+
+To start using your cluster, you need to run the following as a regular user:
+
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 10.224.47.161:6443 --token pe6cd8.il4wx3aw5rcvtfhx \
+    --discovery-token-ca-cert-hash sha256:5098c4dbec46eadb0800943ee8eb751e19e402e49a5d4ff3fb88eaf5105e0f80 
+-----------------------------------------------------------
+
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+安装Flannel
+kubectl apply -f kube-flannel.yml
+
+加入Worker
+kubeadm join 10.224.47.161:6443 --token pe6cd8.il4wx3aw5rcvtfhx \
+    --discovery-token-ca-cert-hash sha256:5098c4dbec46eadb0800943ee8eb751e19e402e49a5d4ff3fb88eaf5105e0f80 
+
+设置Worker的ROLES标签
+kubectl label node worker01 node-role.kubernetes.io/worker=worker
+kubectl label node worker02 node-role.kubernetes.io/worker=worker
+kubectl label node worker03 node-role.kubernetes.io/worker=worker
+
+------------------------------------------
+[root@master01 ~]# kubectl get nodes
+NAME       STATUS   ROLES    AGE   VERSION
+master01   Ready    master   15h   v1.18.2
+worker01   Ready    worker   15h   v1.18.2
+worker02   Ready    worker   15h   v1.18.2
+worker03   Ready    worker   15h   v1.18.2
+[root@master01 ~]# 
+------------------------------------------
+
+------------------------------------------
+[root@master01 ~]# kubectl get pods -A -o wide
+NAMESPACE     NAME                               READY   STATUS    RESTARTS   AGE   IP              NODE       NOMINATED NODE   READINESS GATES
+kube-system   coredns-66bff467f8-2hht5           1/1     Running   0          16h   10.244.1.2      worker01   <none>           <none>
+kube-system   coredns-66bff467f8-7zkx2           1/1     Running   0          16h   10.244.0.2      master01   <none>           <none>
+kube-system   etcd-master01                      1/1     Running   0          16h   10.224.47.161   master01   <none>           <none>
+kube-system   kube-apiserver-master01            1/1     Running   0          16h   10.224.47.161   master01   <none>           <none>
+kube-system   kube-controller-manager-master01   1/1     Running   0          16h   10.224.47.161   master01   <none>           <none>
+kube-system   kube-flannel-ds-amd64-hfnl4        1/1     Running   0          16h   10.224.47.163   worker02   <none>           <none>
+kube-system   kube-flannel-ds-amd64-lc84v        1/1     Running   0          16h   10.224.47.164   worker03   <none>           <none>
+kube-system   kube-flannel-ds-amd64-vdgf5        1/1     Running   0          16h   10.224.47.161   master01   <none>           <none>
+kube-system   kube-flannel-ds-amd64-xd9j5        1/1     Running   0          16h   10.224.47.162   worker01   <none>           <none>
+kube-system   kube-proxy-4gnrv                   1/1     Running   0          16h   10.224.47.162   worker01   <none>           <none>
+kube-system   kube-proxy-6xfzt                   1/1     Running   0          16h   10.224.47.161   master01   <none>           <none>
+kube-system   kube-proxy-kq2t8                   1/1     Running   0          16h   10.224.47.164   worker03   <none>           <none>
+kube-system   kube-proxy-znxqx                   1/1     Running   0          16h   10.224.47.163   worker02   <none>           <none>
+kube-system   kube-scheduler-master01            1/1     Running   0          16h   10.224.47.161   master01   <none>           <none>
+[root@master01 ~]# 
+------------------------------------------
+
+上传Metallb安装包文件metallb.tar.gz
+导入镜像文件
+
+docker load -i controller.tar
+docker load -i speaker.tar
+
+修改参数
+kubectl edit configmap -n kube-system kube-proxy
+
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: "ipvs"
+ipvs:
+  strictARP: true
+  
+编写config.yaml
+vi config.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: metallb-system
+  name: config
+data:
+  config: |
+    address-pools:
+    - name: default
+      protocol: layer2
+      addresses:
+      - 10.224.47.165-10.224.47.166
+
+安装Metallb
+kubectl apply -f namespace.yaml
+kubectl apply -f metallb.yaml
+kubectl create secret generic -n metallb-system memberlist --from-literal=secretkey="$(openssl rand -base64 128)"
+kubectl apply -f config.yaml
+
+编辑参数
+kubectl edit configmap/config -n metallb-system
+
+上传Glusterfs文件包gluster.tar.gz
+导入镜像文件
+
+docker load -i gluster.tar
+docker load -i heketi.tar
+
+在Workers上安装glusterfs-fuse
+rpm -Uvh --replacefiles --replacepkgs --nodeps --force *.rpm
+
+vi topology.json
+
+{
+  "clusters": [
+    {
+      "nodes": [
+        {
+          "node": {
+            "hostnames": {
+              "manage": [
+                "worker01"
+              ],
+              "storage": [
+                "10.224.47.162"
+              ]
+            },
+            "zone": 1
+          },
+          "devices": [
+            "/dev/sdb"
+          ]
+        },
+        {
+          "node": {
+            "hostnames": {
+              "manage": [
+                "worker02"
+              ],
+              "storage": [
+                "10.224.47.163"
+              ]
+            },
+            "zone": 1
+          },
+          "devices": [
+            "/dev/sdb"
+          ]
+        },
+        {
+          "node": {
+            "hostnames": {
+              "manage": [
+                "worker03"
+              ],
+              "storage": [
+                "10.224.47.164"
+              ]
+            },
+            "zone": 1
+          },
+          "devices": [
+            "/dev/sdb"
+          ]
+        }
+      ]
+    }
+  ]
+}		
+
+编辑yaml文件，修改api版本和增加spec/selector
+
+部署gluster
+kubectl create namespace heketi
+
+擦除磁盘
+wipefs --all --force /dev/sdb
+
+在worker上加载内核模块
+modprobe dm_thin_pool
+
+vi /etc/modules-load.d/glusterfs.conf
+
+dm_thin_pool
+
+
+
+删除gk-deploy中--show-all参数后运行
+./gk-deploy -g -v -n heketi --admin-key heketi-glusterfs -y 
+
+----------------------------------------
+Determining heketi service URL ... OK
+
+heketi is now running and accessible via http://10.244.2.32:8080 . To run
+administrative commands you can install 'heketi-cli' and use it as follows:
+
+  # heketi-cli -s http://10.244.2.32:8080 --user admin --secret '<ADMIN_KEY>' cluster list
+
+You can find it at https://github.com/heketi/heketi/releases . Alternatively,
+use it from within the heketi pod:
+
+  # /usr/bin/kubectl -n heketi exec -it <HEKETI_POD> -- heketi-cli -s http://localhost:8080 --user admin --secret '<ADMIN_KEY>' cluster list
+
+For dynamic provisioning, create a StorageClass similar to this:
+
+---
+apiVersion: storage.k8s.io/v1beta1
+kind: StorageClass
+metadata:
+  name: glusterfs-storage
+provisioner: kubernetes.io/glusterfs
+parameters:
+  resturl: "http://10.244.2.32:8080"
+
+
+Deployment complete!
+
+[root@master01 deploy]# 
+----------------------------------------
+
+新建StorageClass
+[root@master01 deploy]# vi storage-class.yaml
+---
+apiVersion: storage.k8s.io/v1beta1
+kind: StorageClass
+metadata:
+  name: glusterfs-storage
+provisioner: kubernetes.io/glusterfs
+parameters:
+  resturl: "http://10.244.2.32:8080"
+  restuser: "admin"
+  restuserkey: "heketi-glusterfs"
+
+kubectl create -f storage-class.yaml
+
+[root@master01 deploy]# kubectl get storageclass
+NAME                PROVISIONER               RECLAIMPOLICY   VOLUMEBINDINGMODE   ALLOWVOLUMEEXPANSION   AGE
+glusterfs-storage   kubernetes.io/glusterfs   Delete          Immediate           false                  15s
+[root@master01 deploy]#
+
+新建PersistentVolumeClaim
+vi persistent-volumeclaim.yaml
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+ name: gluster-test
+ annotations:
+   volume.beta.kubernetes.io/storage-class: glusterfs-storage
+spec:
+ accessModes:
+  - ReadWriteOnce
+ resources:
+   requests:
+     storage: 5Gi
+
+kubectl create -f persistent-volumeclaim.yaml 
+
+persistentvolumeclaim/gluster-test created
+[root@master01 deploy]# kubectl get pvc
+NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS        AGE
+gluster-test   Bound    pvc-957238b5-517f-4017-a55a-a321b1676486   5Gi        RWO            glusterfs-storage   8s
+[root@master01 deploy]#
+[root@master01 deploy]# kubectl get pv
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                  STORAGECLASS        REASON   AGE
+pvc-957238b5-517f-4017-a55a-a321b1676486   5Gi        RWO            Delete           Bound    default/gluster-test   glusterfs-storage            47s
+[root@master01 deploy]#
+
+测试Gluster
+vi nginx.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-test-pod
+  labels:
+    name: nginx-test-pod
+spec:
+  containers:
+  - name: nginx-test-pod
+    image: nginx
+    imagePullPolicy: IfNotPresent
+    ports:
+    - name: web
+      containerPort: 80
+    volumeMounts:
+    - name: gluster-vol-test
+      mountPath: /usr/share/nginx/html
+  volumes:
+  - name: gluster-vol-test
+    persistentVolumeClaim:
+      claimName: gluster-test
+
+kubectl create -f nginx.yaml
+
+vi nginx-deploy.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  replicas: 2 
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: web
+          containerPort: 80
+        volumeMounts:
+        - name: gluster-vol-test
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: gluster-vol-test
+        persistentVolumeClaim:
+          claimName: gluster-test
+
+kubectl create -f nginx-deploy.yaml
+
+kubectl expose deployment nginx-deployment --port=80 --type=LoadBalancer
+
+[root@master01 deploy]# kubectl get svc -o wide
+NAME                                                     TYPE           CLUSTER-IP       EXTERNAL-IP     PORT(S)        AGE     SELECTOR
+details                                                  ClusterIP      10.98.113.165    <none>          9080/TCP       2d19h   app=details
+glusterfs-dynamic-957238b5-517f-4017-a55a-a321b1676486   ClusterIP      10.105.118.147   <none>          1/TCP          57m     <none>
+kubernetes                                               ClusterIP      10.96.0.1        <none>          443/TCP        3d20h   <none>
+nginx-deployment                                         LoadBalancer   10.96.239.82     10.224.47.166   80:30811/TCP   3m27s   app=nginx
+productpage                                              ClusterIP      10.96.221.151    <none>          9080/TCP       2d19h   app=productpage
+ratings                                                  ClusterIP      10.100.183.15    <none>          9080/TCP       2d19h   app=ratings
+reviews                                                  ClusterIP      10.100.220.182   <none>          9080/TCP       2d19h   app=reviews
+[root@master01 deploy]#
+
+[root@localhost ~]# curl http://10.224.47.166
+Hello World from GlusterFS!!!
+[root@localhost ~]#
+
+[root@master01 deploy]# kubectl get pods                 
+NAME                              READY   STATUS    RESTARTS   AGE
+details-v1-8556f9b6fd-52rmp       2/2     Running   2          2d19h
+nginx-test-pod                    1/1     Running   0          13s
+productpage-v1-559cb4c69f-wkbw5   2/2     Running   2          2d19h
+ratings-v1-66bc766cf4-sbvf5       2/2     Running   2          2d19h
+reviews-v1-bcf9667f9-4c2s5        2/2     Running   2          2d19h
+reviews-v2-7846b549c-mxt5q        2/2     Running   2          2d19h
+reviews-v3-68c569cb87-xs7lh       2/2     Running   2          2d19h
+[root@master01 deploy]#
+
+[root@master01 deploy]# kubectl exec -ti nginx-test-pod -- /bin/bash
+root@nginx-test-pod:/# cd /usr/share/nginx/html/
+root@nginx-test-pod:/usr/share/nginx/html# echo 'Hello World from GlusterFS!!!' > index.html
+root@nginx-test-pod:/usr/share/nginx/html# ls
+index.html
+root@nginx-test-pod:/usr/share/nginx/html# exit
+exit
+[root@master01 deploy]#
+
+上传Istio安装安装文件和镜像包istio-image.tar.gz
+导入镜像文件
+
+docker load -i citadel.tar 
+docker load -i coredns-plugin.tar 
+docker load -i galley.tar 
+docker load -i grafana.tar 
+docker load -i mixer.tar 
+docker load -i node-agent-k8s.tar 
+docker load -i pilot.tar 
+docker load -i proxyv2.tar 
+docker load -i sidecar_injector.tar 
+docker load -i prometheus.tar
+docker load -i jaeger.tar
+docker load -i kiali.tar
+
+istioctl operator init
+kubectl create ns istio-system
+
+vi demo.yaml
+
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  namespace: istio-system
+  name: example-istiocontrolplane
+spec:
+  profile: demo
+  
+kubectl apply -f demo.yaml
+
+--------------------------------------------------
+[root@master01 ~]# kubectl get svc -n istio-system
+NAME                        TYPE           CLUSTER-IP       EXTERNAL-IP     PORT(S)                                                                                                                                      AGE
+grafana                     ClusterIP      10.106.125.123   <none>          3000/TCP                                                                                                                                     98m
+istio-egressgateway         ClusterIP      10.105.226.46    <none>          80/TCP,443/TCP,15443/TCP                                                                                                                     98m
+istio-ingressgateway        LoadBalancer   10.110.198.166   10.224.47.165   15020:30732/TCP,80:32155/TCP,443:32631/TCP,15029:31461/TCP,15030:30922/TCP,15031:31468/TCP,15032:31650/TCP,31400:31367/TCP,15443:30773/TCP   98m
+istio-pilot                 ClusterIP      10.103.30.159    <none>          15010/TCP,15011/TCP,15012/TCP,8080/TCP,15014/TCP,443/TCP                                                                                     98m
+istiod                      ClusterIP      10.103.48.155    <none>          15012/TCP,443/TCP                                                                                                                            98m
+jaeger-agent                ClusterIP      None             <none>          5775/UDP,6831/UDP,6832/UDP                                                                                                                   98m
+jaeger-collector            ClusterIP      10.96.15.188     <none>          14267/TCP,14268/TCP,14250/TCP                                                                                                                98m
+jaeger-collector-headless   ClusterIP      None             <none>          14250/TCP                                                                                                                                    98m
+jaeger-query                ClusterIP      10.103.55.178    <none>          16686/TCP                                                                                                                                    98m
+kiali                       ClusterIP      10.96.151.89     <none>          20001/TCP                                                                                                                                    98m
+prometheus                  ClusterIP      10.103.41.21     <none>          9090/TCP                                                                                                                                     98m
+tracing                     ClusterIP      10.105.195.80    <none>          80/TCP                                                                                                                                       98m
+zipkin                      ClusterIP      10.109.240.158   <none>          9411/TCP                                                                                                                                     98m
+[root@master01 ~]#
+--------------------------------------------------
+
+使用手动注入（因Flannel与Istio的兼容问题，自动注入失败）
+istioctl kube-inject -f bookinfo.yaml | kubectl apply -f -
+
+打开Kiali
+istioctl dashboard kiali
+
+安装MySQL
+
+[root@master01 mysql]# echo -n "mysql-test-secret-passwd" | base64
+bXlzcWwtdGVzdC1zZWNyZXQtcGFzc3dk
+[root@master01 mysql]#
+
+vi secret.yaml
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-test-secrets
+type: Opaque
+data:
+  ROOT_PASSWORD: bXlzcWwtdGVzdC1zZWNyZXQtcGFzc3dk
+
+kubectl apply -f secret.yaml
+
+vi pvc.yaml
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-test-disk
+  annotations:
+    volume.beta.kubernetes.io/storage-class: glusterfs-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+kubectl apply -f pvc.yaml
+
+vi deploy.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-test-deployment
+  labels:
+    app: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:5
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - mountPath: "/var/lib/mysql"
+              subPath: "mysql"
+              name: mysql-data
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-test-secrets
+                  key: ROOT_PASSWORD
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-test-disk
+
+kubectl apply -f deploy.yaml
+
+vi svc.yaml
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-test-service
+spec:
+  selector:
+    app: mysql
+  ports:
+  - protocol: TCP
+    port: 3306
+    targetPort: 3306
+
+kubectl apply -f svc.yaml
+
+安装redis
+上传gcr-redis.tar
+
+kubectl create -f redis-master.yaml
+kubectl create -f redis-sentinel-service.yaml
+kubectl create -f redis-controller.yaml
+kubectl create -f redis-sentinel-controller.yaml
+
+安装minio
+
+安装Spinnaker
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: halyard-config-map
+data:
+  config: |
+    halyard:
+      halconfig:
+        directory: /Users/spinnaker/.hal
+    spinnaker:
+      config:
+        input:
+          endpoint: http://minio:9000
+          accessKeyId: "minio"
+          secretAccessKey: "minio123"
+          bucket: halconfig
+          enablePathStyleAccess: true
+    secrets:
+      vault:
+        enabled: false
+        url: https://vault.url
+        path: example
+        role: example
+        authMethod: KUBERNETES
+
+
+kubectl -n spinnaker apply -f halyard.yml
+
+kubectl -n spinnaker exec -it halyard-0 -- /bin/bash
+
+hal config provider kubernetes enable --no-validate
+hal config provider kubernetes account add spinnaker   --provider-version v2   --only-spinnaker-managed true   --service-account true   --namespaces spinnaker --no-validate
+hal config deploy edit   --type distributed   --account-name spinnaker   --location spinnaker --no-validate
+
+hal config features edit --artifacts true --no-validate
+hal config features edit --artifacts-rewrite true --no-validate
+hal config artifact http enable --no-validate
+
+hal config storage s3 edit \
+--bucket spinnaker \
+--endpoint http://minio:9000 \
+--access-key-id minio \
+--secret-access-key minio123 \
+--no-validate
+
+mkdir -p /home/spinnaker/.hal/default/{profiles,service-settings}
+
+vi /home/spinnaker/.hal/default/profiles/gate-local.yml
+
+server:
+  servlet:
+    context-path: /api/v1
+
+vi /home/spinnaker/.hal/default/service-settings/gate.yml
+
+healthEndpoint: /api/v1/health
+
+hal version bom 1.20.2 -q -o yaml
+
+hal config version edit --version 1.20.2 --no-validate
+
+docker pull docker.io/armory/clouddriver:2.19.8
+docker pull docker.io/armory/echo:2.19.8
+docker pull docker.io/armory/fiat:2.19.6
+docker pull docker.io/armory/front50:2.19.6
+docker pull docker.io/armory/gate:2.19.5
+docker pull docker.io/armory/igor:2.19.6
+docker pull docker.io/armory/orca:2.19.9
+docker pull docker.io/armory/rosco:2.19.6
+docker pull docker.io/armory/deck:2.19.7
+docker pull docker.io/armory/dinghy:2.19.5
+docker pull docker.io/armory/terraformer:1.0.6
+docker pull docker.io/armory/kayenta:2.19.5
+docker pull docker.io/armory/monitoring-daemon:0.16.1-7d506f0-rc1
+#docker pull docker.io/armory/monitoring-third-party:0.16.1-7d506f0-rc1（not exist）
+docker pull docker.io/armory/redis:2
+
+
+version: 2.19.8-rc.1
+timestamp: "2020-04-22 01:49:47"
+services:
+  clouddriver:
+    commit: 2bd55acb
+    version: 2.19.8
+  echo:
+    commit: 43e1966a
+    version: 2.19.8
+  fiat:
+    commit: e7d5efa3
+    version: 2.19.6
+  front50:
+    commit: 32cc7a7c
+    version: 2.19.6
+  gate:
+    commit: 5ea58df0
+    version: 2.19.5
+  igor:
+    commit: 67f5ae20
+    version: 2.19.6
+  orca:
+    commit: be0f8e7a
+    version: 2.19.9
+  rosco:
+    commit: e168a011
+    version: 2.19.6
+  deck:
+    commit: 4f6b2719
+    version: 2.19.7
+  dinghy:
+    commit: ef444037
+    version: 2.19.5
+  terraformer:
+    commit: f3edd3da
+    version: 1.0.6
+  kayenta:
+    commit: fa1521ae
+    version: 2.19.5
+  monitoring-daemon:
+    version: 0.16.1-7d506f0-rc1
+  monitoring-third-party:
+    version: 0.16.1-7d506f0-rc1
+dependencies:
+  redis:
+    version: 2:2.8.4-2
+artifactSources:
+  dockerRegistry: docker.io/armory
+
+hal deploy apply
+
+openssl req \
+ -newkey rsa:2048 \
+ -nodes -sha256 \
+ -x509 -days 365 \
+ -keyout registry.key \
+ -out registry.crt
+
+
+kubectl create secret tls registry-tls \
+    --key registry.key \
+    --cert registry.crt
+
+
+docker run -p 8084:8084 -p 9000:9000 \
+    --name halyard --rm \
+    -v ~/.hal:/home/spinnaker/.hal \
+    -d \
+    armory/halyard-armory:1.9.1
+
+docker exec -it halyard bash
+
+kubectl get storageclass
+kubectl patch storageclass glusterfs-storage -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
