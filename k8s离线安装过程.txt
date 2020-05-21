@@ -652,6 +652,8 @@ hal config storage s3 edit \
 --secret-access-key minio123 \
 --no-validate
 
+hal config storage edit --type s3
+
 mkdir -p /home/spinnaker/.hal/default/{profiles,service-settings}
 
 vi /home/spinnaker/.hal/default/profiles/gate-local.yml
@@ -759,3 +761,71 @@ docker exec -it halyard bash
 
 kubectl get storageclass
 kubectl patch storageclass glusterfs-storage -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+
+services:
+  echo:
+    version: 2.12.1-20200507020017
+    commit: 7b04fb3d80dacba05dad29b754615a546168c8cc
+  clouddriver:
+    version: 6.8.2-20200518071229
+    commit: f6709294361ac4459bf63f2064d43d699e4630e5
+  deck:
+    version: 3.1.1-20200518071229
+    commit: e0f33be10ce4d2cf79ea7f66f31a6059ba3bc7ab
+  fiat:
+    version: 1.11.0-20200428134356
+    commit: c88008c3a1359c445eee8cff23184e5484e472a9
+  front50:
+    version: 0.23.1-20200509020016
+    commit: 4cbc3b136ac7cc200f7a58040e7d352390d38a31
+  gate:
+    version: 1.16.0-20200501020017
+    commit: c9975aa819f06115a7a27ddf8156b487712cd980
+  igor:
+    version: 1.10.0-20200428134356
+    commit: 1c1d7d69689b46cc6483ef23281a810ea458e51c
+  kayenta:
+    version: 0.15.1-20200509020016
+    commit: f3af8422684b1c95eced83020e14c8e27ed7b466
+  orca:
+    version: 2.14.0-20200502020017
+    commit: e2b32d9cc794b30048f502728f8126eae227eeec
+  rosco:
+    version: 0.19.0-20200428134356
+    commit: 32481f1ed3532ac802cb9dc9cff719a480f63a20
+  defaultArtifact: {}
+  monitoring-third-party:
+    version: 0.17.0-20200501020017
+    commit: 226f54ffe8a49df95af290bcd57aa0c2f225ed36
+  monitoring-daemon:
+    version: 0.17.0-20200501020017
+    commit: 226f54ffe8a49df95af290bcd57aa0c2f225ed36
+dependencies:
+  redis:
+    version: 2:2.8.4-2
+  consul:
+    version: 0.7.5
+  vault:
+    version: 0.7.0
+artifactSources:
+  debianRepository: https://dl.bintray.com/spinnaker-releases/debians
+  dockerRegistry: gcr.io/spinnaker-marketplace
+  googleImageProject: marketplace-spinnaker-release
+  gitPrefix: https://github.com/spinnaker
+
+docker pull gcr.io/spinnaker-marketplace/clouddriver:6.8.2-20200518071229
+docker pull gcr.io/spinnaker-marketplace/echo:2.12.1-20200507020017
+docker pull gcr.io/spinnaker-marketplace/fiat:1.11.0-20200428134356
+docker pull gcr.io/spinnaker-marketplace/front50:0.23.1-20200509020016
+docker pull gcr.io/spinnaker-marketplace/gate:1.16.0-20200501020017
+docker pull gcr.io/spinnaker-marketplace/igor:1.10.0-20200428134356
+docker pull gcr.io/spinnaker-marketplace/orca:2.14.0-20200502020017
+docker pull gcr.io/spinnaker-marketplace/rosco:0.19.0-20200428134356
+docker pull gcr.io/spinnaker-marketplace/deck:3.1.1-20200518071229
+docker pull gcr.io/spinnaker-marketplace/kayenta:0.15.1-20200509020016
+docker pull gcr.io/spinnaker-marketplace/monitoring-daemon:0.17.0-20200501020017
+docker pull gcr.io/spinnaker-marketplace/monitoring-third-party:0.17.0-20200501020017
+docker pull gcr.io/spinnaker-marketplace/redis:2
+docker pull gcr.io/spinnaker-marketplace/consul:0.7.5
+docker pull gcr.io/spinnaker-marketplace/vault:0.7.0
+
