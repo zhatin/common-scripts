@@ -264,7 +264,8 @@ vi /etc/modules-load.d/glusterfs.conf
 
 dm_thin_pool
 
-
+如果出现Can't open /dev/sdb exclusively.  Mounted filesystem?
+ echo 1 > /sys/block/sdb/device/delete
 
 删除gk-deploy中--show-all参数后运行
 ./gk-deploy -g -v -n heketi --admin-key heketi-glusterfs -y 
@@ -313,6 +314,9 @@ parameters:
   restuserkey: "heketi-glusterfs"
 
 kubectl create -f storage-class.yaml
+
+如果需要修改reseturl
+kubectl replace -f storage-class.yaml --force 
 
 [root@master01 deploy]# kubectl get storageclass
 NAME                PROVISIONER               RECLAIMPOLICY   VOLUMEBINDINGMODE   ALLOWVOLUMEEXPANSION   AGE
@@ -595,6 +599,55 @@ spec:
 
 kubectl apply -f svc.yaml
 
+安装Apollo
+初始化数据库
+kubectl exec -it mysql-test-deployment-5f6c7599d9-ldstq -- mysql -u root -pmysql-test-secret-passwd < apolloconfigdb.sql
+kubectl exec -it mysql-test-deployment-5f6c7599d9-ldstq -- mysql -u root -pmysql-test-secret-passwd < apolloportaldb.sql
+
+修改yaml后
+kubectl apply -f service-apollo-config-server-dev.yaml
+kubectl apply -f service-apollo-admin-server-dev.yaml
+kubectl apply -f service-apollo-portal-server.yaml
+
+部署demo
+kubectl apply -f deploy.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apollo-demo-deployment
+  labels:
+    app: apollo-demo-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: apollo-demo-app
+  template:
+    metadata:
+      labels:
+        app: apollo-demo-app
+    spec:
+      containers:
+      - name: apollo-demo-app
+        image: apollo-demo:0.0.1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apollo-demo-service
+spec:
+  selector:
+    app: apollo-demo-app
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30008
+  type: LoadBalancer
+
 安装redis
 上传gcr-redis.tar
 
@@ -604,6 +657,10 @@ kubectl create -f redis-controller.yaml
 kubectl create -f redis-sentinel-controller.yaml
 
 安装minio
+
+如果PVC无法删除
+kubectl describe pvc PVC_NAME | grep Finalizers
+kubectl patch pvc PVC_NAME -p '{"metadata":{"finalizers": []}}' --type=merge
 
 安装Spinnaker
 
@@ -874,3 +931,45 @@ kubectl delete deploy spin-gate -n spinnaker
 kubectl delete deploy spin-orca -n spinnaker 
 kubectl delete deploy spin-redis -n spinnaker 
 kubectl delete deploy spin-rosco -n spinnaker 
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spin-ingress
+  labels:
+    app: spin
+    cluster: spin-ingress
+  annotations:
+    kubernetes.io/ingress.class: istio
+spec:
+  rules:
+  - 
+    # host: spin.k8s.test
+    # ^ If we have other things running in our cluster, we should uncomment this line and specify a valid DNS name
+    http:
+      paths:
+      - backend:
+          serviceName: spin-deck
+          servicePort: 9000
+        path: /
+      - backend:
+          serviceName: spin-gate
+          servicePort: 8084
+        path: /api/v1
+
+kubectl -n spinnaker expose service spin-gate --type LoadBalancer \
+  --port 80,443 \
+  --target-port 8084 \
+  --name spin-gate-public
+
+kubectl -n spinnaker expose service spin-deck --type LoadBalancer \
+  --port 80,443 \
+  --target-port 9000 \
+  --name spin-deck-public
+
+kubectl -n spinnaker get svc spin-gate-public -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+kubectl -n spinnaker get svc spin-gate-public -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+
+hal config security api edit --override-base-url http://10.224.47.169
+hal config security ui edit --override-base-url http://10.224.47.170
