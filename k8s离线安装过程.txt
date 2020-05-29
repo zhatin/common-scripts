@@ -467,6 +467,8 @@ docker load -i kiali.tar
 istioctl operator init
 kubectl create ns istio-system
 
+istio profile dump demo
+-------------------------------------
 vi demo.yaml
 
 apiVersion: install.istio.io/v1alpha1
@@ -497,6 +499,8 @@ tracing                     ClusterIP      10.105.195.80    <none>          80/T
 zipkin                      ClusterIP      10.109.240.158   <none>          9411/TCP                                                                                                                                     98m
 [root@master01 ~]#
 --------------------------------------------------
+自动注入
+kubectl label namespace default istio-injection=enabled
 
 使用手动注入（因Flannel与Istio的兼容问题，自动注入失败）
 istioctl kube-inject -f bookinfo.yaml | kubectl apply -f -
@@ -610,7 +614,7 @@ kubectl apply -f service-apollo-admin-server-dev.yaml
 kubectl apply -f service-apollo-portal-server.yaml
 
 部署demo
-kubectl apply -f deploy.yaml
+kubectl apply -f deploy.yaml，或者istioctl kube-inject -f deploy.yaml | kubectl apply -f - 
 
 apiVersion: apps/v1
 kind: Deployment
@@ -973,3 +977,54 @@ kubectl -n spinnaker get svc spin-gate-public -o jsonpath='{.status.loadBalancer
 
 hal config security api edit --override-base-url http://10.224.47.169
 hal config security ui edit --override-base-url http://10.224.47.170
+
+升级Istio 1.6.0
+
+docker pull quay.io/kiali/kiali:v1.18
+docker pull docker.io/prom/prometheus:v2.15.1
+docker pull docker.io/istio/proxyv2:1.6.0
+docker pull docker.io/jaegertracing/all-in-one:1.16
+docker pull docker.io/istio/pilot:1.6.0
+docker pull grafana/grafana:6.5.2
+docker pull docker.io/istio/mixer:1.6.0
+docker pull docker.io/istio/install-cni:1.6.0
+docker pull docker.io/istio/operator:1.6.0
+
+docker save quay.io/kiali/kiali:v1.18 > kiali.tar
+docker save docker.io/prom/prometheus:v2.15.1 > prometheus.tar
+docker save docker.io/istio/proxyv2:1.6.0 > proxyv2.tar
+docker save docker.io/jaegertracing/all-in-one:1.16 > jaeger.tar
+docker save docker.io/istio/pilot:1.6.0 > pilot.tar
+docker save grafana/grafana:6.5.2 > grafana.tar
+docker save docker.io/istio/mixer:1.6.0 > mixer.tar
+docker save docker.io/istio/install-cni:1.6.0 > install-cni.tar
+docker save docker.io/istio/operator:1.6.0 > operator.tar
+
+docker load -i kiali.tar
+docker load -i prometheus.tar
+docker load -i proxyv2.tar
+docker load -i jaeger.tar
+docker load -i pilot.tar
+docker load -i grafana.tar
+docker load -i mixer.tar
+docker load -i install-cni.tar
+docker load -i operator.tar
+
+集群二
+Your Kubernetes control-plane has initialized successfully!
+
+To start using your cluster, you need to run the following as a regular user:
+
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 10.224.47.165:6443 --token eh1q4b.ynau7ab2dp535qfr \
+    --discovery-token-ca-cert-hash sha256:b70e52e1994bf6c0c40caaea6ba67c518528132cf345a330e7da8beb4534bd26 
+[root@masterb01 rpms]# 
