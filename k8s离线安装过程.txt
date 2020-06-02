@@ -1011,6 +1011,8 @@ docker load -i install-cni.tar
 docker load -i operator.tar
 
 集群二
+kubeadm init --pod-network-cidr=10.233.0.0/16 --service-cidr=10.112.0.0/12
+
 Your Kubernetes control-plane has initialized successfully!
 
 To start using your cluster, you need to run the following as a regular user:
@@ -1025,6 +1027,169 @@ Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
 
 Then you can join any number of worker nodes by running the following on each as root:
 
-kubeadm join 10.224.47.165:6443 --token eh1q4b.ynau7ab2dp535qfr \
-    --discovery-token-ca-cert-hash sha256:b70e52e1994bf6c0c40caaea6ba67c518528132cf345a330e7da8beb4534bd26 
+kubeadm join 10.224.47.165:6443 --token rczs7y.8afkzmhk6l4ok7x1 \
+    --discovery-token-ca-cert-hash sha256:36c1d18c4ff06a442a36416dc34bd63a7cf69e97345feefd80c672547da5eaed 
 [root@masterb01 rpms]# 
+
+kubectl label node workerb01 node-role.kubernetes.io/worker=worker
+
+Clean up
+If you used disposable servers for your cluster, for testing, you can switch those off and do no further clean up. You can use kubectl config delete-cluster to delete your local references to the cluster.
+
+However, if you want to deprovision your cluster more cleanly, you should first drain the node and make sure that the node is empty, then deconfigure the node.
+
+Remove the node
+Talking to the control-plane node with the appropriate credentials, run:
+
+kubectl drain <node name> --delete-local-data --force --ignore-daemonsets
+kubectl delete node <node name>
+Then, on the node being removed, reset all kubeadm installed state:
+
+kubeadm reset
+The reset process does not reset or clean up iptables rules or IPVS tables. If you wish to reset iptables, you must do so manually:
+
+iptables -F && iptables -t nat -F && iptables -t mangle -F && iptables -X
+If you want to reset the IPVS tables, you must run the following command:
+
+ipvsadm -C
+If you wish to start over simply run kubeadm init or kubeadm join with the appropriate arguments.
+
+Clean up the control plane
+You can use kubeadm reset on the control plane host to trigger a best-effort clean up.
+
+See the kubeadm reset reference documentation for more information about this subcommand and its options.
+
+第三方服务账号
+kubectl get --raw /api/v1 | jq '.resources[] | select(.name | index("serviceaccounts/token"))'
+
+多网络共享控制平面
+cluster1
+kubectl create ns istio-system
+kubectl create secret generic cacerts -n istio-system --from-file=samples/certs/ca-cert.pem --from-file=samples/certs/ca-key.pem --from-file=samples/certs/root-cert.pem --from-file=samples/certs/cert-chain.pem
+
+istioctl manifest apply -f install/kubernetes/operator/examples/multicluster/values-istio-multicluster-primary.yaml
+
+kubectl get pods -n istio-system
+
+kubectl create namespace istio-system
+kubectl create secret generic cacerts -n istio-system \
+    --from-file=samples/certs/ca-cert.pem \
+    --from-file=samples/certs/ca-key.pem \
+    --from-file=samples/certs/root-cert.pem \
+    --from-file=samples/certs/cert-chain.pem
+
+Main cluster
+
+vi istio-main-cluster.yaml
+
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  values:
+    # selfSigned is required if Citadel is enabled, that is when values.global.istiod.enabled is false.
+    security:
+      selfSigned: false
+
+    global:
+      multiCluster:
+        clusterName: main0
+      network: network1
+
+      # Mesh network configuration. This is optional and may be omitted if
+      # all clusters are on the same network.
+      meshNetworks:
+        network1:
+          endpoints:
+          # Always use Kubernetes as the registry name for the main cluster in the mesh network configuration
+          - fromRegistry: Kubernetes
+          gateways:
+          - registry_service_name: istio-ingressgateway.istio-system.svc.cluster.local
+            port: 443
+
+        network2:
+          endpoints:
+          - fromRegistry: remote0
+          gateways:
+          - registry_service_name: istio-ingressgateway.istio-system.svc.cluster.local
+            port: 443
+
+      # Use the existing istio-ingressgateway.
+      meshExpansion:
+        enabled: true
+
+istioctl  manifest apply -f istio-main-cluster.yaml
+
+$ export ISTIOD_REMOTE_EP=$(kubectl  -n istio-system get svc istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+$ echo "ISTIOD_REMOTE_EP is ${ISTIOD_REMOTE_EP}"
+
+Remote cluster
+
+vi istio-remote0-cluster.yaml
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  values:
+    global:
+      # The remote cluster's name and network name must match the values specified in the
+      # mesh network configuration of the main cluster.
+      multiCluster:
+        clusterName: remote0
+      network: network2
+
+      # Replace ISTIOD_REMOTE_EP with the the value of ISTIOD_REMOTE_EP set earlier.
+      remotePilotAddress: 10.224.47.168
+
+  ## The istio-ingressgateway is not required in the remote cluster if both clusters are on
+  ## the same network. To disable the istio-ingressgateway component, uncomment the lines below.
+  #
+  # components:
+  #  ingressGateways:
+  #  - name: istio-ingressgateway
+  #    enabled: false
+
+istioctl  manifest apply -f istio-remote0-cluster.yaml
+
+vi cluster-aware-gateway.yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: cluster-aware-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: tls
+      protocol: TLS
+    tls:
+      mode: AUTO_PASSTHROUGH
+    hosts:
+    - "*.local"
+
+kubectl  apply -f cluster-aware-gateway.yaml
+
+istioctl x create-remote-secret --context=kubernetes-admin165@kubernetes --name remote0 | \
+    kubectl apply -f - --context=kubernetes-admin161@kubernetes
+
+kubectl create  namespace sample
+kubectl label  namespace sample istio-injection=enabled
+
+Remote Cluster
+kubectl create  -f samples/helloworld/helloworld.yaml -l app=helloworld -n sample
+kubectl create  -f samples/helloworld/helloworld.yaml -l version=v2 -n sample
+
+Main Cluster
+kubectl create -f samples/helloworld/helloworld.yaml -l app=helloworld -n sample
+kubectl create -f samples/helloworld/helloworld.yaml -l version=v1 -n sample
+
+kubectl get pod -n sample
+
+kubectl apply  -f samples/sleep/sleep.yaml -n sample
+
+kubectl exec  -it -n sample -c sleep $(kubectl get pod  -n sample -l app=sleep -o jsonpath='{.items[0].metadata.name}') -- curl helloworld.sample:5000/hello
+kubectl exec  -it -n sample -c sleep $(kubectl get pod  -n sample -l app=sleep -o jsonpath='{.items[0].metadata.name}') -- curl helloworld.sample:5000/hello
+
+kubectl  -n sample get pod -l app=sleep -o name | cut -f2 -d'/' | \
+    xargs -I{} istioctl  -n sample proxy-config endpoints {} --cluster "outbound|5000||helloworld.sample.svc.cluster.local"
