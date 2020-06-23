@@ -1063,7 +1063,7 @@ See the kubeadm reset reference documentation for more information about this su
 kubectl get --raw /api/v1 | jq '.resources[] | select(.name | index("serviceaccounts/token"))'
 
 多网络共享控制平面
-cluster1
+
 kubectl create ns istio-system
 kubectl create secret generic cacerts -n istio-system --from-file=samples/certs/ca-cert.pem --from-file=samples/certs/ca-key.pem --from-file=samples/certs/root-cert.pem --from-file=samples/certs/cert-chain.pem
 
@@ -1117,7 +1117,14 @@ spec:
       meshExpansion:
         enabled: true
 
-istioctl  manifest apply -f istio-main-cluster.yaml
+istioctl  manifest apply -f istio-main-cluster.yaml  
+
+istioctl  manifest apply -f istio-main-cluster.yaml \
+  --set addonComponents.grafana.enabled=true \
+  --set addonComponents.kiali.enabled=true \
+  --set addonComponents.prometheus.enabled=true \
+  --set addonComponents.tracing.enabled=true \
+  --set values.gateways.istio-egressgateway.enabled=true 
 
 $ export ISTIOD_REMOTE_EP=$(kubectl  -n istio-system get svc istio-ingressgateway -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 $ echo "ISTIOD_REMOTE_EP is ${ISTIOD_REMOTE_EP}"
@@ -1193,3 +1200,223 @@ kubectl exec  -it -n sample -c sleep $(kubectl get pod  -n sample -l app=sleep -
 
 kubectl  -n sample get pod -l app=sleep -o name | cut -f2 -d'/' | \
     xargs -I{} istioctl  -n sample proxy-config endpoints {} --cluster "outbound|5000||helloworld.sample.svc.cluster.local"
+
+Get Service CIDR
+echo '{"apiVersion":"v1","kind":"Service","metadata":{"name":"tst"},"spec":{"clusterIP":"1.1.1.1","ports":[{"port":443}]}}' | kubectl apply -f - 2>&1 | sed 's/.*valid IPs is //'
+
+vi kiali-secret.yaml
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kiali
+  namespace: istio-system
+  labels:
+    app: kiali
+type: Opaque
+data:
+  username: YWRtaW4=
+  passphrase: YWRtaW4=
+
+设置locality标签
+kubectl label node worker01 topology.kubernetes.io/region=us-east-2
+kubectl label node worker02 topology.kubernetes.io/region=us-east-2
+kubectl label node worker03 topology.kubernetes.io/region=us-east-2
+
+kubectl label node workerb01 topology.kubernetes.io/region=us-west-2
+
+
+多网络复制控制平面+VM
+
+kubectl create namespace istio-system
+kubectl create secret generic cacerts -n istio-system \
+    --from-file=samples/certs/ca-cert.pem \
+    --from-file=samples/certs/ca-key.pem \
+    --from-file=samples/certs/root-cert.pem \
+    --from-file=samples/certs/cert-chain.pem
+
+istioctl manifest apply \
+    -f install/kubernetes/operator/examples/multicluster/values-istio-multicluster-gateways.yaml \
+    --set values.global.meshExpansion.enabled=true
+
+kubectl get svc -n istio-system istiocoredns -o jsonpath={.spec.clusterIP}
+
+vi dns-config.yaml 
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health
+        ready
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           upstream
+           fallthrough in-addr.arpa ip6.arpa
+        }
+        prometheus :9153
+        forward . /etc/resolv.conf
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+    global:53 {
+        errors
+        cache 30
+        forward . 10.111.246.12:53
+    }
+
+kubectl apply -f dns-config.yaml
+
+Cluster1
+
+kubectl create namespace foo
+kubectl label namespace foo istio-injection=enabled
+kubectl apply -n foo -f samples/sleep/sleep.yaml
+
+kubectl get -n foo pod -l app=sleep -o jsonpath={.items..metadata.name}
+
+Cluster2
+
+kubectl create namespace bar
+kubectl label namespace bar istio-injection=enabled
+kubectl apply -n bar -f samples/httpbin/httpbin.yaml
+
+kubectl get svc --selector=app=istio-ingressgateway \
+    -n istio-system -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}'
+
+Cluster1
+
+vi httpbin-svc.yaml
+
+apiVersion: networking.istio.io/v1alpha3
+kind: ServiceEntry
+metadata:
+  name: httpbin-bar
+spec:
+  hosts:
+  # must be of form name.namespace.global
+  - httpbin.bar.global
+  # Treat remote cluster services as part of the service mesh
+  # as all clusters in the service mesh share the same root of trust.
+  location: MESH_INTERNAL
+  ports:
+  - name: http1
+    number: 8000
+    protocol: http
+  resolution: DNS
+  addresses:
+  # the IP address to which httpbin.bar.global will resolve to
+  # must be unique for each remote service, within a given cluster.
+  # This address need not be routable. Traffic for this IP will be captured
+  # by the sidecar and routed appropriately.
+  - 240.0.0.2
+  endpoints:
+  # This is the routable address of the ingress gateway in cluster2 that
+  # sits in front of sleep.foo service. Traffic from the sidecar will be
+  # routed to this address.
+  - address: 10.224.47.170
+    ports:
+      http1: 15443 # Do not change this port value
+
+kubectl apply -n foo -f httpbin-svc.yaml
+kubectl exec sleep-8f795f47d-sfvth -n foo -c sleep -- curl -I httpbin.bar.global:8000/headers
+
+
+run in cluster main0
+istioctl experimental add-to-mesh external-service vmhttp 10.224.47.167 http:8080 -n vm
+#istioctl x remove-from-mesh external-service vmhttp -n vm
+
+Admiral
+Cluster1
+
+kubectl delete envoyfilter istio-multicluster-ingressgateway -n istio-system
+export ADMIRAL_HOME=./admiral-install-v0.9
+$ADMIRAL_HOME/scripts/install_admiral.sh $ADMIRAL_HOME
+mkdir /tmp
+$ADMIRAL_HOME/scripts/cluster-secret.sh ~/.kube/config-161  ~/.kube/config-161 admiral
+
+$ADMIRAL_HOME/scripts/install_sample_services.sh $ADMIRAL_HOME
+kubectl edit deploy greeting -n sample
+
+kubectl get ServiceEntry -n admiral-sync
+kubectl get ServiceEntry default.greeting.global-se -n admiral-sync -o yaml
+
+Cluster2
+
+kubectl delete envoyfilter istio-multicluster-ingressgateway -n istio-system
+export ADMIRAL_HOME=./admiral-install-v0.9
+
+kubectl apply -f $ADMIRAL_HOME/yaml/remotecluster.yaml
+$ADMIRAL_HOME/scripts/cluster-secret.sh ~/.kube/config-161  ~/.kube/config-165 admiral
+
+kubectl apply -f $ADMIRAL_HOME/yaml/remotecluster_sample.yaml
+kubectl edit deploy greeting -n sample
+
+Run in Cluster1
+kubectl get serviceentry default.greeting.global-se -n admiral-sync -o yaml
+
+kubectl exec --namespace=sample -it $(kubectl get pod -l "app=webapp" --namespace=sample -o jsonpath='{.items[0].metadata.name}') -c webapp -- curl -v http://default.greeting.global
+
+kubectl apply -f $ADMIRAL_HOME/yaml/gtp.yaml
+
+设置locality标签
+kubectl label node worker01 topology.kubernetes.io/region=us-east-2
+kubectl label node worker02 topology.kubernetes.io/region=us-east-2
+kubectl label node worker03 topology.kubernetes.io/region=us-east-2
+
+kubectl label node workerb01 topology.kubernetes.io/region=us-west-2
+
+修改MTU
+kubectl patch configmap/Calico-config -n kube-system --type merge \
+  -p '{"data":{"veth_mtu": "1440"}}'
+
+部署registry
+openssl req -newkey rsa:2048 -nodes -sha256 -keyout certs/domain.key -x509 -days 365 -out certs/domain.crt
+
+docker run -d \
+  --restart=always \
+  --name registry \
+  -v /root/certs:/certs \
+  -v /var/lib/registry:/var/lib/registry \
+  -e REGISTRY_HTTP_ADDR=0.0.0.0:443 \
+  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt \
+  -e REGISTRY_HTTP_TLS_KEY=/certs/domain.key \
+  -p 443:443 \
+  registry:2
+
+配置docker client
+mkdir -p /etc/docker/certs.d/registry.test.com
+
+cp certs/domain.crt /etc/docker/certs.d/registry.test.com/ca.crt
+
+docker tag istio/install-cni:1.5.6 registry.test.com/istio/install-cni:1.5.6
+docker tag istio/proxyv2:1.5.6 registry.test.com/istio/proxyv2:1.5.6
+docker tag istio/app_sidecar:1.5.6 registry.test.com/istio/app_sidecar:1.5.6
+docker tag istio/pilot:1.5.6 registry.test.com/istio/pilot:1.5.6
+docker tag istio/mixer:1.5.6 registry.test.com/istio/mixer:1.5.6
+docker tag istio/galley:1.5.6 registry.test.com/istio/galley:1.5.6
+docker tag istio/sidecar_injector:1.5.6 registry.test.com/istio/sidecar_injector:1.5.6
+docker tag istio/operator:1.5.6 registry.test.com/istio/operator:1.5.6
+docker tag istio/node-agent-k8s:1.5.6 registry.test.com/istio/node-agent-k8s:1.5.6
+docker tag istio/citadel:1.5.6 registry.test.com/istio/citadel:1.5.6
+
+docker push registry.test.com/istio/install-cni:1.5.6
+docker push registry.test.com/istio/proxyv2:1.5.6
+docker push registry.test.com/istio/app_sidecar:1.5.6
+docker push registry.test.com/istio/pilot:1.5.6
+docker push registry.test.com/istio/mixer:1.5.6
+docker push registry.test.com/istio/galley:1.5.6
+docker push registry.test.com/istio/sidecar_injector:1.5.6
+docker push registry.test.com/istio/operator:1.5.6
+docker push registry.test.com/istio/node-agent-k8s:1.5.6
+docker push registry.test.com/istio/citadel:1.5.6
+
+curl --cacert certs/domain.crt https://registry.test.com/v2/_catalog 
+curl --cacert certs/domain.crt https://registry.test.com/v2/bitnami/postgresql/tags/list
+
