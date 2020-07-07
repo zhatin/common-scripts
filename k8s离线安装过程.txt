@@ -1420,3 +1420,206 @@ docker push registry.test.com/istio/citadel:1.5.6
 curl --cacert certs/domain.crt https://registry.test.com/v2/_catalog 
 curl --cacert certs/domain.crt https://registry.test.com/v2/bitnami/postgresql/tags/list
 
+扩展lvm
+fdisk /dev/sda
+partprobe
+pvcreate /dev/sda3
+vgextend /dev/centos /dev/sda3
+vgdisplay -v
+lvextend -l+100%Free /dev/centos/root
+xfs_growfs /dev/centos/root
+df -h
+
+使用Helm安装Mysql HA
+helm install mydbcluster bitnami/mysql \
+  --set global.imageRegistry=registry.test.com \
+  --set global.storageClass=rook-ceph-block \
+  --set image.registry=registry.test.com \
+  --set image.tag=8.0 -n mysql
+
+[root@localhost mysql]# helm status mydbcluster
+NAME: mydbcluster
+LAST DEPLOYED: Wed Jun 24 14:16:41 2020
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+Please be patient while the chart is being deployed
+
+Tip:
+
+  Watch the deployment status using the command: kubectl get pods -w --namespace default
+
+Services:
+
+  echo Master: mydbcluster-mysql.default.svc.cluster.local:3306
+  echo Slave:  mydbcluster-mysql-slave.default.svc.cluster.local:3306
+
+Administrator credentials:
+
+  echo Username: root
+  echo Password : $(kubectl get secret --namespace default mydbcluster-mysql -o jsonpath="{.data.mysql-root-password}" | base64 --decode)
+
+To connect to your database:
+
+  1. Run a pod that you can use as a client:
+
+      kubectl run mydbcluster-mysql-client --rm --tty -i --restart='Never' --image  registry.test.com/bitnami/mysql:8.0 --namespace default --command -- bash
+
+  2. To connect to master service (read/write):
+
+      mysql -h mydbcluster-mysql.default.svc.cluster.local -uroot -p my_database
+
+  3. To connect to slave service (read-only):
+
+      mysql -h mydbcluster-mysql-slave.default.svc.cluster.local -uroot -p my_database
+
+To upgrade this helm chart:
+
+  1. Obtain the password as described on the 'Administrator credentials' section and set the 'root.password' parameter as shown below:
+
+      ROOT_PASSWORD=$(kubectl get secret --namespace default mydbcluster-mysql -o jsonpath="{.data.mysql-root-password}" | base64 --decode)
+      helm upgrade mydbcluster bitnami/mysql --set root.password=$ROOT_PASSWORD
+
+WARNING: Rolling tag detected (bitnami/mysql:8.0), please note that it is strongly recommended to avoid using rolling tags in a production environment.
++info https://docs.bitnami.com/containers/how-to/understand-rolling-tags-containers/
+
+
+
+
+WARNING: Rolling tag detected (bitnami/mysql:8.0), please note that it is strongly recommended to avoid using rolling tags in a production environment.
++info https://docs.bitnami.com/containers/how-to/understand-rolling-tags-containers/
+[root@localhost mysql]# 
+
+
+kubectl exec -it mydbcluster-mysql-client -n mysql -c mydbcluster-mysql-client  -- mysql  -u root -h mydbcluster-mysql.mysql.svc.cluster.local -pbmPer4ZGY5 < apolloconfigdb.sql
+
+ kubectl scale --replicas=1 deploy apollo-demo-deployment
+
+使用Helm安装redis-cluster（自动注入时，须手动删除creator）
+helm install redis-cache bitnami/redis-cluster \
+  --set image.registry=registry.test.com \
+  --set image.repository=bitnami/redis-cluster \
+  --set image.tag=6.0.5 \
+  --set image.pullPolicy=Always 
+
+现象
+Istio 升级到 1.5.0 之后，新建命名空间，并开启 Istio sidecar 注入后，部署服务，会出现如下报错
+
+MountVolume.SetUp failed for volume "istiod-ca-cert" : configmap "istio-ca-root-cert" not found
+解决方法
+kubectl rollout restart deployment istiod -n istio-system
+参考
+https://github.com/istio/istio/issues/22463
+
+helm install redis-cache bitnami/redis -n redis \
+  --set image.registry=registry.test.com \
+  --set image.repository=bitnami/redis \
+  --set image.tag=6.0.5 \
+  --set image.pullPolicy=Always  
+
+NAME: redis-cache
+LAST DEPLOYED: Tue Jun 30 16:10:52 2020
+NAMESPACE: redis
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+** Please be patient while the chart is being deployed **
+Redis can be accessed via port 6379 on the following DNS names from within your cluster:
+
+redis-cache-master.redis.svc.cluster.local for read/write operations
+redis-cache-slave.redis.svc.cluster.local for read-only operations
+
+
+To get your password run:
+
+    export REDIS_PASSWORD=$(kubectl get secret --namespace redis redis-cache -o jsonpath="{.data.redis-password}" | base64 --decode)
+
+To connect to your Redis server:
+
+1. Run a Redis pod that you can use as a client:
+   kubectl run --namespace redis redis-cache-client --rm --tty -i --restart='Never' \
+    --env REDIS_PASSWORD=$REDIS_PASSWORD \
+   --image registry.test.com/bitnami/redis:6.0.5 -- bash
+
+2. Connect using the Redis CLI:
+   redis-cli -h redis-cache-master -a $REDIS_PASSWORD
+   redis-cli -h redis-cache-slave -a $REDIS_PASSWORD
+
+To connect to your database from outside the cluster execute the following commands:
+
+    kubectl port-forward --namespace redis svc/redis-cache-master 6379:6379 &
+    redis-cli -h 127.0.0.1 -p 6379 -a $REDIS_PASSWORD
+
+
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: apollo-gateway
+spec:
+  selector:
+    istio: ingressgateway # use istio default ingress gateway
+  servers:
+  - port:
+      number: 8070
+      name: http
+      protocol: HTTP
+    hosts:
+    - "apollo.test.com"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: apollo-web
+spec:
+  hosts:
+  - "apollo.test.com"
+  gateways:
+  - apollo-gateway
+  http:
+  - route:
+    - destination:
+        port:
+          number: 8070
+        host: service-apollo-portal-server.apollo.svc.cluster.local
+
+
+helm install apollo-service-dev -n apollo \
+    --set configService.image.repository=registry.test.com/apolloconfig/apollo-configservice \
+    --set adminService.image.repository=registry.test.com/apolloconfig/apollo-adminservice \
+    --set configdb.host=10.104.221.153 \
+    --set configdb.userName=root \
+    --set configdb.password=bmPer4ZGY5 \
+    apollo/apollo-service
+
+NOTES:
+Get meta service url for current release by running these commands:
+  echo http://apollo-service-dev-apollo-configservice.apollo:8080
+
+For local test use:
+  export POD_NAME=$(kubectl get pods --namespace apollo -l "app=apollo-service-dev-apollo-configservice" -o jsonpath="{.items[0].metadata.name}")
+  echo http://127.0.0.1:8080
+  kubectl --namespace apollo port-forward $POD_NAME 8080:8080
+[root@localhost helm]# 
+
+helm install apollo-portal -n apollo \
+    --set image.repository=registry.test.com/apolloconfig/apollo-portal \
+    --set portaldb.host=10.104.221.153 \
+    --set portaldb.userName=root \
+    --set portaldb.password=bmPer4ZGY5 \
+    --set config.envs="dev" \
+    --set replicaCount=1 \
+    --set config.metaServers.dev=http://apollo-service-dev-apollo-configservice.apollo:8080 \
+    apollo/apollo-portal
+
+
+NOTES:
+Get apollo portal url by running these commands:
+  export POD_NAME=$(kubectl get pods --namespace apollo -l "app=apollo-portal" -o jsonpath="{.items[0].metadata.name}")
+  echo "Visit http://127.0.0.1:8070 to use your application"
+  kubectl --namespace apollo port-forward $POD_NAME 8070:8070
+[root@localhost helm]# 
+
+kubectl exec sleep-8f795f47d-sfvth -n foo -c sleep -- curl apollo-demo-service.apollo-demo.svc.cluster.local:8080   
