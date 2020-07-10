@@ -1622,4 +1622,49 @@ Get apollo portal url by running these commands:
   kubectl --namespace apollo port-forward $POD_NAME 8070:8070
 [root@localhost helm]# 
 
-kubectl exec sleep-8f795f47d-sfvth -n foo -c sleep -- curl apollo-demo-service.apollo-demo.svc.cluster.local:8080   
+kubectl exec sleep-8f795f47d-sfvth -n foo -c sleep -- curl -s apollo-demo-service.apollo-demo.svc.cluster.local:8080   
+
+安装cert manager
+helm install \
+  cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --version v0.15.1 \
+  --set installCRDs=true \
+  --set cainjector.image.repository=registry.test.com/jetstack/cert-manager-cainjector \
+  --set image.repository=registry.test.com/jetstack/cert-manager-controller \
+  --set webhook.image.repository=registry.test.com/jetstack/cert-manager-webhook
+
+NOTES:
+cert-manager has been deployed successfully!
+
+In order to begin issuing certificates, you will need to set up a ClusterIssuer
+or Issuer resource (for example, by creating a 'letsencrypt-staging' issuer).
+
+More information on the different types of issuers and how to configure them
+can be found in our documentation:
+
+https://cert-manager.io/docs/configuration/
+
+For information on how to configure cert-manager to automatically provision
+Certificates for Ingress resources, take a look at the `ingress-shim`
+documentation:
+
+https://cert-manager.io/docs/usage/ingress/
+[root@localhost cert-manager]# 
+
+kubectl get configmap istio -n istio-system -o yaml | grep -o "mode: ALLOW_ANY" | uniq
+kubectl get configmap istio -n istio-system -o yaml | sed 's/mode: ALLOW_ANY/mode: REGISTRY_ONLY/g' | kubectl replace -n istio-system -f -
+kubectl get configmap istio -n istio-system -o yaml | sed 's/mode: REGISTRY_ONLY/mode: ALLOW_ANY/g' | kubectl replace -n istio-system -f -
+
+
+mvn install:install-file -DgroupId=grpc.cma.cimiss2.music -DartifactId=music-grpc-proto -Dversion=1.0.0.RELEASE -Dpackaging=jar -Dfile=music-grpc-proto-1.0.0.RELEASE.jar
+
+kubectl set image -n grpc-demo deployment.apps/grpc-svc-demo-client-deployment grpc-svc-demo-client=registry.test.com/grpc-svc-demo-client:0.0.2 --record
+
+kubectl exec -it sleep-8f795f47d-sfvth -n foo -c sleep -- curl -s  "grpc-svc-demo-client-service.grpc-demo.svc:8080/getSurfEleByTime?dataCode=SURF_CHN_MUL_MIN&times=20191113081500&elements=Station_Id_C,Datetime,TEM"
+
+返回结果如下：
+{"data": ["I0961,2019-11-13 08:15:00,14.3","S1813,2019-11-13 08:15:00,13.4","V6089,2019-11-13 08:15:00,999999.0"],"requestInfo": {"errorMessage": "query success!!","requestTime": "2020-07-10 07:19:53","responseTime": "2020-07-10 07:19:53","rowCount": 3,"colCount": 3}}
+
+
+
