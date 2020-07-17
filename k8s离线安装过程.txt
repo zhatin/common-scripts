@@ -1666,5 +1666,165 @@ kubectl exec -it sleep-8f795f47d-sfvth -n foo -c sleep -- curl -s  "grpc-svc-dem
 返回结果如下：
 {"data": ["I0961,2019-11-13 08:15:00,14.3","S1813,2019-11-13 08:15:00,13.4","V6089,2019-11-13 08:15:00,999999.0"],"requestInfo": {"errorMessage": "query success!!","requestTime": "2020-07-10 07:19:53","responseTime": "2020-07-10 07:19:53","rowCount": 3,"colCount": 3}}
 
+删除namespace时挂起
+kubectl get namespace kiali-operator -o json > a.yaml
+Remove kubernetes from the finalizers array
+kubectl replace --raw "/api/v1/namespaces/kiali-operator/finalize" -f ./a.yaml
+
+[root@localhost bitnami]# helm install -n cassandra cassdb ./cassandra
+NAME: cassdb
+LAST DEPLOYED: Wed Jul 15 16:00:16 2020
+NAMESPACE: cassandra
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+** Please be patient while the chart is being deployed **
+
+Cassandra can be accessed through the following URLs from within the cluster:
+
+  - CQL: cassdb-cassandra.cassandra.svc.cluster.local:9042
+  - Thrift: cassdb-cassandra.cassandra.svc.cluster.local:9160
+
+To get your password run:
+
+   export CASSANDRA_PASSWORD=$(kubectl get secret --namespace cassandra cassdb-cassandra -o jsonpath="{.data.cassandra-password}" | base64 --decode)
+
+Check the cluster status by running:
+
+   kubectl exec -it --namespace cassandra $(kubectl get pods --namespace cassandra -l app=cassandra,release=cassdb -o jsonpath='{.items[0].metadata.name}') nodetool status
+
+To connect to your Cassandra cluster using CQL:
+
+1. Run a Cassandra pod that you can use as a client:
+
+   kubectl run --namespace cassandra cassdb-cassandra-client --rm --tty -i --restart='Never' \
+   --env CASSANDRA_PASSWORD=$CASSANDRA_PASSWORD \
+    \
+   --image registry.test.com/bitnami/cassandra:3.11.6-debian-10-r131 -- bash
+
+2. Connect using the cqlsh client:
+
+   cqlsh -u cassandra -p $CASSANDRA_PASSWORD cassdb-cassandra
+
+To connect to your database from outside the cluster execute the following commands:
+
+   kubectl port-forward --namespace cassandra svc/cassdb-cassandra 9042:9042 &
+   cqlsh -u cassandra -p $CASSANDRA_PASSWORD 127.0.0.1 9042
+[root@localhost bitnami]# 
+
+[root@localhost bitnami]# helm install -n es esdb ./elasticsearch
+NAME: esdb
+LAST DEPLOYED: Wed Jul 15 16:03:52 2020
+NAMESPACE: es
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+-------------------------------------------------------------------------------
+ WARNING
+
+    Elasticsearch requires some changes in the kernel of the host machine to
+    work as expected. If those values are not set in the underlying operating
+    system, the ES containers fail to boot with ERROR messages.
+
+    More information about these requirements can be found in the links below:
+
+      https://www.elastic.co/guide/en/elasticsearch/reference/current/file-descriptors.html
+      https://www.elastic.co/guide/en/elasticsearch/reference/current/vm-max-map-count.html
+
+    This chart uses a privileged initContainer to change those settings in the Kernel
+    by running: sysctl -w vm.max_map_count=262144 && sysctl -w fs.file-max=65536
+
+** Please be patient while the chart is being deployed **
+
+  Elasticsearch can be accessed within the cluster on port 9200 at esdb-elasticsearch-coordinating-only.es.svc.cluster.local
+
+  To access from outside the cluster execute the following commands:
+
+    kubectl port-forward --namespace es svc/esdb-elasticsearch-coordinating-only 9200:9200 &
+    curl http://127.0.0.1:9200/
+[root@localhost bitnami]# 
+
+[root@localhost bitnami]# helm install -n grafana grafana ./grafana
+NAME: grafana
+LAST DEPLOYED: Wed Jul 15 16:17:40 2020
+NAMESPACE: grafana
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+** Please be patient while the chart is being deployed **
+
+1. Get the application URL by running these commands:
+    echo "Browse to http://127.0.0.1:8080"
+    kubectl port-forward svc/grafana 8080:3000 &
+
+2. Get the admin credentials:
+
+    echo "User: admin"
+    echo "Password: $(kubectl get secret grafana-admin --namespace grafana -o jsonpath="{.data.GF_SECURITY_ADMIN_PASSWORD}" | base64 --decode)"
+[root@localhost bitnami]# 
+
+[root@localhost bitnami]# helm install -n kafka kafka ./kafka
+NAME: kafka
+LAST DEPLOYED: Wed Jul 15 17:16:27 2020
+NAMESPACE: kafka
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+** Please be patient while the chart is being deployed **
+
+Kafka can be accessed by consumers via port 9092 on the following DNS name from within your cluster:
+
+    kafka.kafka.svc.cluster.local
+
+Each Kafka broker can be accessed by producers via port 9092 on the following DNS name(s) from within your cluster:
+    kafka-0.kafka-headless.kafka.svc.cluster.local
+
+To create a pod that you can use as a Kafka client run the following commands:
+
+    kubectl run kafka-client --restart='Never' --image registry.test.com/bitnami/kafka:2.5.0-debian-10-r78 --namespace kafka --command -- sleep infinity
+    kubectl exec --tty -i kafka-client --namespace kafka -- bash
+
+    PRODUCER:
+        kafka-console-producer.sh \
+            
+            --broker-list kafka-0.kafka-headless.kafka.svc.cluster.local:9092, \
+            --topic test
+
+    CONSUMER:
+        kafka-console-consumer.sh \
+            
+            --bootstrap-server kafka.kafka.svc.cluster.local:9092 \
+            --topic test \
+            --from-beginning
+[root@localhost bitnami]#
+
+Cassandra在Istio环境运行需修改容器中文件
+
+CAN I RUN CASSANDRA INSIDE AN ISTIO MESH?
+By default, Cassandra broadcasts the address it uses for binding (accepting connections) to other Cassandra nodes as its address. This is usually the pod IP address and works fine without a service mesh. However, with a service mesh this configuration does not work. Istio and other service meshes require localhost (127.0.0.1) to be the address for binding.
+
+There are two configuration parameters to pay attention to: listen_address and broadcast_address. For running Cassandra in an Istio mesh, the listen_address parameter should be set to 127.0.0.1 and the broadcast_address parameter should be set to the pod IP address.
+
+These configuration parameters are defined in cassandra.yaml in the Cassandra configuration directory (e.g. /etc/cassandra). There are various startup scripts (and yaml files) used for starting Cassandra and care should be given to how these parameters are set by these scripts. For example, some scripts used to configure and start Cassandra use the value of the environment variable CASSANDRA_LISTEN_ADDRESS for setting listen_address.
+
+--------------------------------------------------------------------------------------------------------------------
+FROM registry.test.com/bitnami/cassandra:3.11.6-debian-10-r131
+RUN sed -i 's/cassandra_yaml_set "listen_address" "$host"/cassandra_yaml_set "listen_address" "127.0.0.1"/' /opt/bitnami/scripts/libcassandra.sh
+RUN sed -i 's/cassandra_yaml_set "broadcast_address" "$CASSANDRA_BROADCAST_ADDRESS"/cassandra_yaml_set "broadcast_address" "$host"/' /opt/bitnami/scripts/libcassandra.sh
+
+values.yaml中增加
+istio: true
+
+statefulset.yaml中增加
+            {{- if .Values.istio }}
+            - name: CASSANDRA_BROADCAST_ADDRESS
+              value: {{ .Values.istio | quote }}
+            {{- end }}
+--------------------------------------------------------------------------------------------------------------------
 
 
+bash <(curl -L https://kiali.io/getLatestKialiOperator) --accessible-namespaces '**' -oin 'registry.test.com/kiali/kiali-operator' -oiv latest -kin 'registry.test.com/kiali/kiali' -kiv 'v1.15' -ju 'http://simple-prod-query.tracing.svc.cluster.local:16686' -gu 'http://grafana.grafana.svc.cluster.local:3000'
