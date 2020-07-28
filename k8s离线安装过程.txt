@@ -1935,6 +1935,9 @@ spec:
 
       controlPlaneSecurityEnabled: true
 
+    prometheus:
+      hub: registry.test.com/prom
+
     gateways:
       istio-egressgateway:
         env:
@@ -1942,6 +1945,8 @@ spec:
           ISTIO_META_REQUESTED_NETWORK_VIEW: "external"
   hub: registry.test.com/istio
   tag: 1.6.5
+
+kubectl create namespace istio-system
 
 kubectl create secret generic cacerts -n istio-system \
     --from-file=tools/certs/ick8s/ca-cert.pem \
