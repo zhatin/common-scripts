@@ -57,6 +57,8 @@ vi /etc/docker/daemon.json
 systemctl daemon-reload
 systemctl restart docker
 
+yumdownloader --resolve kubelet kubeadm kubectl
+
 上传k8s离线安装包k8s.tar.gz
 安装kubeadm
 rpm -Uvh --replacefiles --replacepkgs --nodeps --force *.rpm
@@ -73,6 +75,8 @@ docker load -i kube-controller-manager.tar
 docker load -i kube-proxy.tar 
 docker load -i kube-scheduler.tar 
 docker load -i pause.tar
+
+find . -name "*.tar.gz" -print0 | xargs -0 -I {} docker load -i {} 
 
 初始化master 
 kubeadm init --pod-network-cidr=10.244.0.0/16
@@ -1435,7 +1439,7 @@ helm install mydbcluster bitnami/mysql \
   --set global.imageRegistry=registry.test.com \
   --set global.storageClass=rook-ceph-block \
   --set image.registry=registry.test.com \
-  --set image.tag=8.0 -n mysql
+  --set image.tag=8.0.20-debian-10-r41 -n mysql
 
 [root@localhost mysql]# helm status mydbcluster
 NAME: mydbcluster
@@ -1516,7 +1520,7 @@ https://github.com/istio/istio/issues/22463
 helm install redis-cache bitnami/redis -n redis \
   --set image.registry=registry.test.com \
   --set image.repository=bitnami/redis \
-  --set image.tag=6.0.5 \
+  --set image.tag=6.0.5-debian-10-r15 \
   --set image.pullPolicy=Always  
 
 NAME: redis-cache
@@ -1826,5 +1830,18 @@ statefulset.yaml中增加
             {{- end }}
 --------------------------------------------------------------------------------------------------------------------
 
+kubectl edit -n istio-system configmap
 
 bash <(curl -L https://kiali.io/getLatestKialiOperator) --accessible-namespaces '**' -oin 'registry.test.com/kiali/kiali-operator' -oiv latest -kin 'registry.test.com/kiali/kiali' -kiv 'v1.15' -ju 'http://simple-prod-query.tracing.svc.cluster.local:16686' -gu 'http://grafana.grafana.svc.cluster.local:3000'
+
+安装jaeger
+kubectl create ns tracing
+kubectl apply -f jaegertracing.io_jaegers_crd.yaml
+kubectl apply -n tracing -f service_account.yaml
+kubectl apply -n tracing -f role.yaml
+kubectl apply -n tracing -f role_binding.yaml
+kubectl apply -n tracing -f operator.yaml
+
+kubectl apply -n tracing -f deploy-one.yaml
+
+
