@@ -1,4 +1,3 @@
-
 修改/etc/hosts文件
 10.224.47.161   master01
 10.224.47.162   worker01
@@ -471,7 +470,7 @@ docker load -i kiali.tar
 istioctl operator init
 kubectl create ns istio-system
 
-istio profile dump demo
+istioctl profile dump demo
 -------------------------------------
 vi demo.yaml
 
@@ -1829,7 +1828,7 @@ statefulset.yaml中增加
               value: {{ .Values.istio | quote }}
             {{- end }}
 --------------------------------------------------------------------------------------------------------------------
-
+修改zipkin地址
 kubectl edit -n istio-system configmap
 
 bash <(curl -L https://kiali.io/getLatestKialiOperator) --accessible-namespaces '**' -oin 'registry.test.com/kiali/kiali-operator' -oiv latest -kin 'registry.test.com/kiali/kiali' -kiv 'v1.15' -ju 'http://simple-prod-query.tracing.svc.cluster.local:16686' -gu 'http://grafana.grafana.svc.cluster.local:3000'
@@ -1844,4 +1843,110 @@ kubectl apply -n tracing -f operator.yaml
 
 kubectl apply -n tracing -f deploy-one.yaml
 
+使用本地镜像
+kubeadm init --pod-network-cidr=172.173.0.0/16  --service-cidr=192.193.194.0/24  --image-repository="registry.test.com" --kubernetes-version="1.18.6"
 
+kubeadm join 10.224.47.165:6443 --token lewaki.05esycr5q5e52d8n \
+    --discovery-token-ca-cert-hash sha256:27be09f339ddba0104d69475ed53e33329b880c58c10a3876f662c8890863cb7 
+
+kubectl apply -f calico.yaml
+
+istioctl operator init --hub registry.test.com/istio
+
+istioctl manifest generate --set profile=demo > demo-profile.yaml
+修改文件中镜像地址
+
+
+VM
+---
+apiVersion: install.istio.io/v1alpha1
+metadata:
+  namespace: istio-system
+  name: example-istiocontrolplane
+kind: IstioOperator
+spec:
+  values:
+    global:
+      meshExpansion:
+        enabled: true
+
+--------------
+Main Cluster
+---
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  addonComponents:
+    istiocoredns:
+      enabled: true
+
+  components:
+    egressGateways:
+      - name: istio-egressgateway
+        enabled: true
+
+  values:
+    global:
+      # Provides dns resolution for global services
+      podDNSSearchNamespaces:
+        - global
+
+      multiCluster:
+        enabled: true
+
+      meshExpansion:
+        enabled: true
+
+      controlPlaneSecurityEnabled: true
+
+    gateways:
+      istio-egressgateway:
+        env:
+          # Needed to route traffic via egress gateway if desired.
+          ISTIO_META_REQUESTED_NETWORK_VIEW: "external"
+  hub: registry.test.com/istio
+  tag: 1.6.5
+
+合成文件如下：
+
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  addonComponents:
+    istiocoredns:
+      enabled: true
+
+  components:
+    egressGateways:
+      - name: istio-egressgateway
+        enabled: true
+
+  values:
+    global:
+      # Provides dns resolution for global services
+      podDNSSearchNamespaces:
+        - global
+
+      multiCluster:
+        enabled: true
+
+      meshExpansion:
+        enabled: true
+
+      controlPlaneSecurityEnabled: true
+
+    gateways:
+      istio-egressgateway:
+        env:
+          # Needed to route traffic via egress gateway if desired.
+          ISTIO_META_REQUESTED_NETWORK_VIEW: "external"
+  hub: registry.test.com/istio
+  tag: 1.6.5
+
+kubectl create secret generic cacerts -n istio-system \
+    --from-file=tools/certs/ick8s/ca-cert.pem \
+    --from-file=tools/certs/ick8s/ca-key.pem \
+    --from-file=tools/certs/ick8s/root-cert.pem \
+    --from-file=tools/certs/ick8s/cert-chain.pem
+
+istioctl install -f bond.yaml
