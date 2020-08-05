@@ -181,7 +181,7 @@ kubectl apply -f metallb.yaml
 kubectl create secret generic -n metallb-system memberlist --from-literal=secretkey="$(openssl rand -base64 128)"
 kubectl apply -f config.yaml
 
-编辑参数
+编辑参数（如需要时）
 kubectl edit configmap/config -n metallb-system
 
 上传Glusterfs文件包gluster.tar.gz
@@ -1436,7 +1436,6 @@ df -h
 使用Helm安装Mysql HA
 helm install mydbcluster bitnami/mysql \
   --set global.imageRegistry=registry.test.com \
-  --set global.storageClass=rook-ceph-block \
   --set image.registry=registry.test.com \
   --set image.tag=8.0.20-debian-10-r41 -n mysql
 
@@ -1588,13 +1587,16 @@ spec:
           number: 8070
         host: service-apollo-portal-server.apollo.svc.cluster.local
 
+kubectl exec -it mydbcluster-mysql-master-0 -n mysql -c mysql  -- mysql  -u root -h localhost -pucXMEyf9ah < apolloconfigdb.sql
+
+kubectl exec -it mydbcluster-mysql-master-0 -n mysql -c mysql  -- mysql  -u root -h localhost -pucXMEyf9ah < apolloportaldb.sql
 
 helm install apollo-service-dev -n apollo \
     --set configService.image.repository=registry.test.com/apolloconfig/apollo-configservice \
     --set adminService.image.repository=registry.test.com/apolloconfig/apollo-adminservice \
-    --set configdb.host=10.104.221.153 \
+    --set configdb.host=mydbcluster-mysql.mysql.svc.cluster.local \
     --set configdb.userName=root \
-    --set configdb.password=bmPer4ZGY5 \
+    --set configdb.password=ucXMEyf9ah \
     apollo/apollo-service
 
 NOTES:
@@ -1716,7 +1718,14 @@ To connect to your database from outside the cluster execute the following comma
    cqlsh -u cassandra -p $CASSANDRA_PASSWORD 127.0.0.1 9042
 [root@localhost bitnami]# 
 
-[root@localhost bitnami]# helm install -n es esdb ./elasticsearch
+sysctl -w vm.max_map_count=262144 && sysctl -w fs.file-max=65536
+
+vi /etc/sysctl.d/es.conf
+
+ vm.max_map_count=262144 
+ fs.file-max=65536
+
+[ro ot@localhost bitnami]# helm install -n es esdb ./elasticsearch
 NAME: esdb
 LAST DEPLOYED: Wed Jul 15 16:03:52 2020
 NAMESPACE: es
@@ -1831,9 +1840,15 @@ statefulset.yaml中增加
 修改zipkin地址
 kubectl edit -n istio-system configmap
 
-bash <(curl -L https://kiali.io/getLatestKialiOperator) --accessible-namespaces '**' -oin 'registry.test.com/kiali/kiali-operator' -oiv latest -kin 'registry.test.com/kiali/kiali' -kiv 'v1.15' -ju 'http://simple-prod-query.tracing.svc.cluster.local:16686' -gu 'http://grafana.grafana.svc.cluster.local:3000'
+tracing:
+          zipkin:
+            address: jaeger-collector.jaeger.svc.cluster.local:9411
 
-安装jaeger
+##################
+bash <(curl -L https://kiali.io/getLatestKialiOperator) --accessible-namespaces '**' -oin 'registry.test.com/kiali/kiali-operator' -oiv 'v1.22.0' -kin 'registry.test.com/kiali/kiali' -kiv 'v1.22.0' -ju 'http://simple-prod-query.tracing.svc.cluster.local:16686' -gu 'http://grafana.grafana.svc.cluster.local:3000'
+##################
+
+安装jaeger（生产环境用Helm安装）
 kubectl create ns tracing
 kubectl apply -f jaegertracing.io_jaegers_crd.yaml
 kubectl apply -n tracing -f service_account.yaml
@@ -1842,6 +1857,109 @@ kubectl apply -n tracing -f role_binding.yaml
 kubectl apply -n tracing -f operator.yaml
 
 kubectl apply -n tracing -f deploy-one.yaml
+
+使用Helm安装
+[root@bogon jaeger]# helm install -n jaeger jaeger ./jaeger
+NAME: jaeger
+LAST DEPLOYED: Fri Jul 31 15:08:03 2020
+NAMESPACE: jaeger
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+###################################################################
+### IMPORTANT: The use of <component>.env: {...} is deprecated. ###
+### Please use <component>.extraEnv: [] instead.                ###
+###################################################################
+
+You can log into the Jaeger Query UI here:
+
+  export POD_NAME=$(kubectl get pods --namespace jaeger -l "app.kubernetes.io/instance=jaeger,app.kubernetes.io/component=query" -o jsonpath="{.items[0].metadata.name}")
+  echo http://127.0.0.1:8080/
+  kubectl port-forward --namespace jaeger $POD_NAME 8080:16686
+[root@bogon jaeger]# 
+
+使用Helm安装Kiali Operator
+[root@bogon kiali]# helm install -n kiali-operator kiali-operator ./kiali-operator
+NAME: kiali-operator
+LAST DEPLOYED: Fri Jul 31 16:27:59 2020
+NAMESPACE: kiali-operator
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+Welcome to Kiali! For more details on Kiali, see: https://kiali.io
+
+The Kiali Operator [v1.22.0] has been installed in namespace [kiali-operator]. It will be ready soon.
+You have elected to install a Kiali CR in the same namespace as the operator [kiali-operator]. You should be able to access Kiali soon.
+
+================================
+PLEASE READ THIS WARNING NOTICE:
+Because the Kiali CR lives in the same namespace as the operator, DO NOT uninstall the operator or delete the operator namespace without first removing the Kiali CR. If you do not follow this advice then the Kiali Operator deletion will hang indefinitely until you remove the finalizer from the Kiali CR, and then you may find your Kubernetes environment still has Kiali Server remnants left behind.
+================================
+
+If you ever want to uninstall the Kiali Operator, remember to delete the Kiali CR first before uninstalling the operator to give the operator a chance to uninstall and remove all the Kiali Server resources.
+
+(Helm: Chart=[kiali-operator], Release=[kiali-operator], Version=[v1.22.0])
+[root@bogon kiali]# 
+
+安装Kiali
+vi kiali.yaml
+
+apiVersion: kiali.io/v1alpha1
+kind: Kiali
+metadata:
+  name: kiali
+  annotations:
+    ansible.operator-sdk/verbosity: "1"
+spec:
+  istio_namespace: "istio-system"
+  deployment:
+    accessible_namespaces: ["^((?!(istio-operator|kube.*|openshift.*|ibm.*|kiali-operator)).)*$"]
+    image_name: "registry.test.com/kiali/kiali"
+    image_pull_policy: "IfNotPresent"
+    image_pull_secrets: []
+    image_version: "v1.22.0"
+    ingress_enabled: false
+    namespace: ""
+    replicas: 1
+    service_type: ClusterIP
+  external_services:
+    grafana:
+      auth:
+        password: "admin"
+        username: "itOjbQGTxw1"
+      enabled: true
+      in_cluster_url: "http://grafana.grafana.svc.cluster.local:3000"
+      url: ""
+    tracing:
+      auth:
+        password: ""
+        username: ""
+      enabled: true
+      in_cluster_url: "http://jaeger-query.jaeger.svc.cluster.local"
+      namespace_selector: true
+      url: ""
+      whitelist_istio_system: ["jaeger-query", "istio-ingressgateway"]
+
+kubectl apply -n istio-system -f kiali.yaml
+
+登录时使用Token
+kubectl get secret -n istio-system
+kubectl describe -n istio-system secret kiali-service-account-token-7sd4k
+
+如果使用Signing-key
+[root@localhost ~]# echo -n 'admin' | base64
+YWRtaW4=
+[root@localhost ~]# echo -n '12345678' | base64     
+MTIzNDU2Nzg=
+
+kubectl edit -n istio-system secret kiali-signing-key
+
+type: Opaque
+data:
+  username: YWRtaW4=
+  password: MTIzNDU2Nzg=
 
 使用本地镜像
 kubeadm init --pod-network-cidr=172.173.0.0/16  --service-cidr=192.193.194.0/24  --image-repository="registry.test.com" --kubernetes-version="1.18.6"
@@ -1935,8 +2053,14 @@ spec:
 
       controlPlaneSecurityEnabled: true
 
+    istiocoredns:
+      coreDNSImage: registry.test.com/coredns/coredns
+      coreDNSPluginImage: registry.test.com/istio/coredns-plugin:0.2-istio-1.1
+      coreDNSTag: 1.6.5
+
     prometheus:
       hub: registry.test.com/prom
+      tag: v2.15.1
 
     gateways:
       istio-egressgateway:
@@ -1955,3 +2079,165 @@ kubectl create secret generic cacerts -n istio-system \
     --from-file=tools/certs/ick8s/cert-chain.pem
 
 istioctl install -f bond.yaml
+
+##############################################
+
+kubeadm init --pod-network-cidr=172.174.0.0/16  --service-cidr=192.193.195.0/24  --image-repository="registry.test.com" --kubernetes-version="1.18.6"
+
+kubeadm join 10.224.47.161:6443 --token ahd9lz.f3pcgq6uro870zns \
+    --discovery-token-ca-cert-hash sha256:4cdb67025b6a1810cf89c5cc4d8b8fbc988aedd51a9a41ac4043af2283b61615
+
+
+拉取K8s镜像文件到本地
+kubeadm config images pull --image-repository="registry.test.com" --kubernetes-version="1.18.6"
+
+[config/images] Pulled registry.test.com/kube-apiserver:v1.18.6
+[config/images] Pulled registry.test.com/kube-controller-manager:v1.18.6
+[config/images] Pulled registry.test.com/kube-scheduler:v1.18.6
+[config/images] Pulled registry.test.com/kube-proxy:v1.18.6
+[config/images] Pulled registry.test.com/pause:3.2
+[config/images] Pulled registry.test.com/etcd:3.4.3-0
+[config/images] Pulled registry.test.com/coredns:1.6.7
+
+增加节点Token
+kubeadm token create --print-join-command
+
+HA安装Master
+mkdir -p /etc/kubernetes/manifests/
+
+vi /etc/kubernetes/manifests/kube-vip.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  name: kube-vip
+  namespace: kube-system
+spec:
+  containers:
+  - args:
+    - start
+    - -c
+    - /etc/kube-vip/config.yaml
+    image: registry.test.com/plndr/kube-vip:0.1.7
+    name: kube-vip
+    resources: {}
+    securityContext:
+      capabilities:
+        add:
+        - NET_ADMIN
+        - SYS_TIME
+    volumeMounts:
+    - mountPath: /etc/kube-vip/
+      name: config
+  hostNetwork: true
+  volumes:
+  - hostPath:
+      path: /etc/kube-vip/
+    name: config
+status: {}
+
+mkdir -p /etc/kube-vip/
+
+vi /etc/kube-vip/config.yaml
+
+remotePeers:
+- id: server2
+  address: 10.224.47.166
+  port: 10000
+- id: server3
+  address: 10.224.47.167
+  port: 10000
+localPeer:
+  id: server1
+  address: 10.224.47.165
+  port: 10000
+vip: 10.224.47.169
+gratuitousARP: true
+singleNode: false
+startAsLeader: true
+interface: ens192
+loadBalancers:
+- name: Kubernetes Control Plane
+  type: tcp
+  port: 6443
+  bindToVip: true
+  backends:
+  - port: 6444
+    address: 10.224.47.165
+  - port: 6444
+    address: 10.224.47.166
+  - port: 6444
+    address: 10.224.47.167
+
+kubeadm init --pod-network-cidr=10.123.0.0/16  --service-cidr=172.16.0.0/16 --control-plane-endpoint="10.224.47.169:6443" --apiserver-bind-port=6444 --upload-certs --image-repository="registry.test.com" --kubernetes-version="1.18.6"
+
+
+You can now join any number of the control-plane node running the following command on each as root:
+
+  kubeadm join 10.224.47.169:6443 --token wtixjw.e2n7qtrprq0hqsmx \
+    --discovery-token-ca-cert-hash sha256:840c54242b11a194c70bda9eb0b9910a52042b83111d4fc014fa42a266ddd509 \
+    --control-plane --certificate-key be611d77d0c4402d145f588d9e66542a85e07434162e4e4b9a2281a745c7b057
+
+Please note that the certificate-key gives access to cluster sensitive data, keep it secret!
+As a safeguard, uploaded-certs will be deleted in two hours; If necessary, you can use
+"kubeadm init phase upload-certs --upload-certs" to reload certs afterward.
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 10.224.47.169:6443 --token wtixjw.e2n7qtrprq0hqsmx \
+    --discovery-token-ca-cert-hash sha256:840c54242b11a194c70bda9eb0b9910a52042b83111d4fc014fa42a266ddd509 
+
+
+其余的Master节点上
+
+mkdir -p /etc/kube-vip/
+
+vi /etc/kube-vip/config.yaml
+
+remotePeers:
+- id: server1
+  address: 10.224.47.165
+  port: 10000
+- id: server3
+  address: 10.224.47.167
+  port: 10000
+localPeer:
+  id: server2
+  address: 10.224.47.166
+  port: 10000
+vip: 10.224.47.169
+gratuitousARP: true
+singleNode: false
+startAsLeader: false
+interface: ens192
+loadBalancers:
+- name: Kubernetes Control Plane
+  type: tcp
+  port: 6443
+  bindToVip: true
+  backends:
+  - port: 6444
+    address: 10.224.47.165
+  - port: 6444
+    address: 10.224.47.166
+  - port: 6444
+    address: 10.224.47.167
+
+kubeadm join 10.224.47.169:6443 --token wtixjw.e2n7qtrprq0hqsmx \
+    --discovery-token-ca-cert-hash sha256:840c54242b11a194c70bda9eb0b9910a52042b83111d4fc014fa42a266ddd509 \
+    --control-plane --certificate-key be611d77d0c4402d145f588d9e66542a85e07434162e4e4b9a2281a745c7b057
+
+安装Calico
+
+添加Master节点后再启动kube-vip
+vi /etc/kubernetes/manifests/kube-vip.yaml
+文件内容同上
+
+安装MetaLB
+
+让Master节点也可以运行Worker Pods
+kubectl taint nodes --all node-role.kubernetes.io/master-
+
+安装Istio
+
+
