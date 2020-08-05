@@ -2056,7 +2056,7 @@ spec:
     istiocoredns:
       coreDNSImage: registry.test.com/coredns/coredns
       coreDNSPluginImage: registry.test.com/istio/coredns-plugin:0.2-istio-1.1
-      coreDNSTag: 1.6.5
+      coreDNSTag: 1.6.2
 
     prometheus:
       hub: registry.test.com/prom
