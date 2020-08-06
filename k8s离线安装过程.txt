@@ -175,11 +175,11 @@ data:
       addresses:
       - 10.224.47.165-10.224.47.166
 
-安装Metallb
+安装MetalLB
 kubectl apply -f namespace.yaml
-kubectl apply -f metallb.yaml
 kubectl create secret generic -n metallb-system memberlist --from-literal=secretkey="$(openssl rand -base64 128)"
 kubectl apply -f config.yaml
+kubectl apply -f metallb.yaml
 
 编辑参数（如需要时）
 kubectl edit configmap/config -n metallb-system
@@ -2174,9 +2174,9 @@ kubeadm init --pod-network-cidr=10.123.0.0/16  --service-cidr=172.16.0.0/16 --co
 
 You can now join any number of the control-plane node running the following command on each as root:
 
-  kubeadm join 10.224.47.169:6443 --token wtixjw.e2n7qtrprq0hqsmx \
-    --discovery-token-ca-cert-hash sha256:840c54242b11a194c70bda9eb0b9910a52042b83111d4fc014fa42a266ddd509 \
-    --control-plane --certificate-key be611d77d0c4402d145f588d9e66542a85e07434162e4e4b9a2281a745c7b057
+  kubeadm join 10.224.47.169:6443 --token 38knvp.0qevjs6td1u4leyg \
+    --discovery-token-ca-cert-hash sha256:34bb50e6337460f8cb6e951b16e0cb586bcec9bc5ff3fda455c0524aaa10e7d2 \
+    --control-plane --certificate-key ff2614698cffb50663ad42c6792bfe0b62135b4b19e49dafbbaeae6ec3803514
 
 Please note that the certificate-key gives access to cluster sensitive data, keep it secret!
 As a safeguard, uploaded-certs will be deleted in two hours; If necessary, you can use
@@ -2184,9 +2184,8 @@ As a safeguard, uploaded-certs will be deleted in two hours; If necessary, you c
 
 Then you can join any number of worker nodes by running the following on each as root:
 
-kubeadm join 10.224.47.169:6443 --token wtixjw.e2n7qtrprq0hqsmx \
-    --discovery-token-ca-cert-hash sha256:840c54242b11a194c70bda9eb0b9910a52042b83111d4fc014fa42a266ddd509 
-
+kubeadm join 10.224.47.169:6443 --token 38knvp.0qevjs6td1u4leyg \
+    --discovery-token-ca-cert-hash sha256:34bb50e6337460f8cb6e951b16e0cb586bcec9bc5ff3fda455c0524aaa10e7d2 
 
 其余的Master节点上
 
@@ -2223,9 +2222,11 @@ loadBalancers:
   - port: 6444
     address: 10.224.47.167
 
-kubeadm join 10.224.47.169:6443 --token wtixjw.e2n7qtrprq0hqsmx \
-    --discovery-token-ca-cert-hash sha256:840c54242b11a194c70bda9eb0b9910a52042b83111d4fc014fa42a266ddd509 \
-    --control-plane --certificate-key be611d77d0c4402d145f588d9e66542a85e07434162e4e4b9a2281a745c7b057
+
+  kubeadm join 10.224.47.169:6443 --token 38knvp.0qevjs6td1u4leyg \
+    --discovery-token-ca-cert-hash sha256:34bb50e6337460f8cb6e951b16e0cb586bcec9bc5ff3fda455c0524aaa10e7d2 \
+    --control-plane --certificate-key ff2614698cffb50663ad42c6792bfe0b62135b4b19e49dafbbaeae6ec3803514 \
+    --apiserver-bind-port=6444
 
 安装Calico
 
@@ -2233,11 +2234,101 @@ kubeadm join 10.224.47.169:6443 --token wtixjw.e2n7qtrprq0hqsmx \
 vi /etc/kubernetes/manifests/kube-vip.yaml
 文件内容同上
 
-安装MetaLB
+安装MetalLB
+kubectl apply -f namespace.yaml
+kubectl create secret generic -n metallb-system memberlist --from-literal=secretkey="$(openssl rand -base64 128)"
+kubectl apply -f config.yaml
+kubectl apply -f metallb.yaml
 
 让Master节点也可以运行Worker Pods
 kubectl taint nodes --all node-role.kubernetes.io/master-
 
 安装Istio
+kubectl create namespace istio-system
 
+kubectl create secret generic cacerts -n istio-system \
+    --from-file=tools/certs/ick8s/ca-cert.pem \
+    --from-file=tools/certs/ick8s/ca-key.pem \
+    --from-file=tools/certs/ick8s/root-cert.pem \
+    --from-file=tools/certs/ick8s/cert-chain.pem
+
+istioctl install -f bond.yaml
+
+加入Worker节点
+kubeadm join 10.224.47.169:6443 --token 38knvp.0qevjs6td1u4leyg \
+    --discovery-token-ca-cert-hash sha256:34bb50e6337460f8cb6e951b16e0cb586bcec9bc5ff3fda455c0524aaa10e7d2 
+
+kubectl label node worker03 node-role.kubernetes.io/worker=worker
+
+安装nfs-client
+
+kubectl create ns nfs-client
+kubectl apply  -n nfs-client -f rbac.yaml
+kubectl apply  -n nfs-client -f deployment.yaml
+kubectl apply  -n nfs-client -f class.yaml
+
+kubectl patch storageclass managed-nfs-storage -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+
+安装证书自动更新
+kubectl create ns cert-manager
+ helm install -n cert-manager --version "v0.16.0"  cert-manager ./cert-manager
+
+备份证书
+kubectl get -o yaml \
+     --all-namespaces \
+     issuer,clusterissuer,certificates,certificaterequests > cert-manager-backup.yaml
+
+导入证书
+kubectl apply -f cert-manager-backup.yaml
+
+安装MySQL
+kubectl create ns mysql
+kubectl label namespace mysql istio-injection=enabled
+helm install mydbcluster -n mysql ./mysql
+
+安装Redis
+kubectl create ns redis
+kubectl label namespace redis istio-injection=enabled
+helm install redis-cache ./redis -n redis 
+
+安装Cassandra
+kubectl create ns cassandra
+helm install -n cassandra cassdb ./cassandra
+获取密码
+kubectl get secret --namespace cassandra cassdb-cassandra -o jsonpath="{.data.cassandra-password}" | base64 --decode
+
+安装Grafana
+kubectl create ns grafana 
+helm install -n grafana grafana ./grafana
+获取密码
+kubectl get secret grafana-admin --namespace grafana -o jsonpath="{.data.GF_SECURITY_ADMIN_PASSWORD}" | base64 --decode
+
+安装Jaeger
+kubectl create ns jaeger
+helm install -n jaeger jaeger ./jaeger
+
+修改ConfigMap
+kubectl edit -n istio-system configmap
+
+tracing:
+          zipkin:
+            address: jaeger-collector.jaeger.svc.cluster.local:9411
+
+
+安装Kiali-Operator
+kubectl cerate ns kiali-operator
+helm install -n kiali-operator kiali-operator ./kiali-operator
+
+安装Kiali
+kubectl apply -n istio-system -f kiali.yaml
+
+开放Web UI端口
+kubectl edit -n istio-system service/istio-ingressgateway
+
+  - name: http-kiali
+    port: 20001
+    protocol: TCP
+    targetPort: 20001
+
+kubectl apply -f gw.yaml
 
