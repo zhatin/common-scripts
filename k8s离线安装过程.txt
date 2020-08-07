@@ -2281,6 +2281,9 @@ kubectl get -o yaml \
 导入证书
 kubectl apply -f cert-manager-backup.yaml
 
+检查证书有效期（在Master上运行）
+kubeadm alpha certs check-expiration
+
 安装MySQL
 kubectl create ns mysql
 kubectl label namespace mysql istio-injection=enabled
@@ -2332,3 +2335,121 @@ kubectl edit -n istio-system service/istio-ingressgateway
 
 kubectl apply -f gw.yaml
 
+安装Dashboard
+helm repo add k8s-dashboard https://kubernetes.github.io/dashboard
+helm pull k8s-dashboard/kubernetes-dashboard --version 2.3.0
+
+helm install kube-dash -n kube-system ./kubernetes-dashboard
+
+NAME: kube-dash
+LAST DEPLOYED: Fri Aug  7 09:24:29 2020
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+*********************************************************************************
+*** PLEASE BE PATIENT: kubernetes-dashboard may take a few minutes to install ***
+*********************************************************************************
+
+Get the Kubernetes Dashboard URL by running:
+  export POD_NAME=$(kubectl get pods -n kube-system -l "app.kubernetes.io/name=kubernetes-dashboard,app.kubernetes.io/instance=kube-dash" -o jsonpath="{.items[0].metadata.name}")
+  echo https://127.0.0.1:8443/
+  kubectl -n kube-system port-forward $POD_NAME 8443:8443
+[root@bogon dashboard]# 
+
+增加授权账号
+vi sa.yaml
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dash-admin
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: dash-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: dash-admin
+  namespace: kube-system
+
+设置网关入口
+
+vi gw.yaml
+
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: dash-gateway
+spec:
+  selector:
+    istio: ingressgateway # use istio default ingress gateway
+  servers:
+  - port:
+      number: 9443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: PASSTHROUGH
+    hosts:
+    - "*"
+
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: dash-web
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - dash-gateway
+  tls:
+  - match:
+    - port: 9443
+      sniHosts:
+      - "*"
+    route:
+    - destination:
+        host: kube-dash-kubernetes-dashboard.kube-system.svc.cluster.local
+        port:
+          number: 443
+
+增加自定义端口
+kubectl edit -n istio-system svc istio-ingressgateway
+
+  - name: https-dash
+    port: 9443
+    protocol: TCP
+    targetPort: 443
+ 
+获取Token
+kubectl -n kube-system describe secret $(kubectl -n kube-system get secret | grep dash-admin | awk '{print $1}') 
+
+安装Apollo config
+kubectl create ns apollo
+kubectl label namespace apollo istio-injection=enabled
+
+获取MySQL用户密码
+kubectl get secret --namespace mysql mydbcluster-mysql -o jsonpath="{.data.mysql-root-password}" | base64 --decode    
+vas7v0tWSE
+
+初始化数据库
+kubectl exec -it mydbcluster-mysql-master-0 -n mysql -c mysql  -- mysql  -u root -h localhost -pvas7v0tWSE < apolloconfigdb.sql
+kubectl exec -it mydbcluster-mysql-master-0 -n mysql -c mysql  -- mysql  -u root -h localhost -pvas7v0tWSE < apolloportaldb.sql
+
+安装Apollo service（数据库主机：mydbcluster-mysql.mysql.svc）
+helm install apollo-service-dev -n apollo ./apollo-service
+
+安装Apollo Portal
+helm install apollo-portal -n apollo ./apollo-portal
+
+设置标签
+kubectl label namespace apollo kiali.io/member-of=istio-system
