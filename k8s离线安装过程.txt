@@ -2284,6 +2284,9 @@ kubectl apply -f cert-manager-backup.yaml
 检查证书有效期（在Master上运行）
 kubeadm alpha certs check-expiration
 
+更新证书（在Master上运行）
+kubeadm alpha certs renew all
+
 安装MySQL
 kubectl create ns mysql
 kubectl label namespace mysql istio-injection=enabled
@@ -2453,3 +2456,130 @@ helm install apollo-portal -n apollo ./apollo-portal
 
 设置标签
 kubectl label namespace apollo kiali.io/member-of=istio-system
+
+配置Cert-manager证书示例
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager-test
+---
+apiVersion: cert-manager.io/v1alpha2
+kind: ClusterIssuer
+metadata:
+  name: test-selfsigned
+  namespace: cert-manager-test
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1alpha2
+kind: Certificate
+metadata:
+  name: selfsigned-cert
+  namespace: cert-manager-test
+spec:
+  dnsNames:
+    - example.com
+  secretName: selfsigned-cert-tls
+  issuerRef:
+    name: test-selfsigned
+    kind: ClusterIssuer
+  privateKey:
+    rotationPolicy: Always
+
+配置Istio Ingress Gateway SSL证书
+
+apiVersion: cert-manager.io/v1alpha2
+kind: ClusterIssuer
+metadata:
+  name: gwhttps-selfsigned
+  namespace: istio-system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1alpha2
+kind: Certificate
+metadata:
+  name: gw-selfsigned-cert
+  namespace: istio-system
+spec:
+  dnsNames:
+    - test.bjmc
+    - apollo.test.bjmc
+  secretName: gw-selfsigned-cert-tls
+  issuerRef:
+    name: gwhttps-selfsigned
+    kind: ClusterIssuer
+  privateKey:
+    rotationPolicy: Always
+
+使用HTTPS访问Apollo portal
+
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: apollo-tls-gateway
+spec:
+  selector:
+    istio: ingressgateway # use istio default ingress gateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: gw-selfsigned-cert-tls
+    hosts:
+    - "apollo.test.bjmc"
+
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: apollo-portal-tls-web
+spec:
+  hosts:
+  - "apollo.test.bjmc"
+  gateways:
+  - apollo-tls-gateway
+  http:
+  - route:
+    - destination:
+        port:
+          number: 8070
+        host: apollo-portal.apollo.svc.cluster.local
+
+安装Openldap
+[root@localhost helm3]# kubectl label namespace ldap istio-injection=enabled
+namespace/ldap labeled
+[root@localhost helm3]# helm install -n ldap openldap ./openldap
+NAME: openldap
+LAST DEPLOYED: Mon Aug 10 15:16:18 2020
+NAMESPACE: ldap
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+OpenLDAP has been installed. You can access the server from within the k8s cluster using:
+
+  openldap.ldap.svc.cluster.local:389
+
+
+You can access the LDAP adminPassword and configPassword using:
+
+  kubectl get secret --namespace ldap openldap -o jsonpath="{.data.LDAP_ADMIN_PASSWORD}" | base64 --decode; echo
+  kubectl get secret --namespace ldap openldap -o jsonpath="{.data.LDAP_CONFIG_PASSWORD}" | base64 --decode; echo
+
+
+You can access the LDAP service, from within the cluster (or with kubectl port-forward) with a command like (replace password and domain):
+  ldapsearch -x -H ldap://openldap.ldap.svc.cluster.local:389 -b dc=example,dc=org -D "cn=admin,dc=example,dc=org" -w $LDAP_ADMIN_PASSWORD
+
+
+Test server health using Helm test:
+  helm test openldap
+
+
+You can also consider installing the helm chart for phpldapadmin to manage this instance of OpenLDAP, or install Apache Directory Studio, and connect using kubectl port-forward.
+[root@localhost helm3]#
+
