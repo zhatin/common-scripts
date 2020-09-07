@@ -1666,7 +1666,7 @@ mvn install:install-file -DgroupId=grpc.cma.cimiss2.music -DartifactId=music-grp
 
 kubectl set image -n grpc-demo deployment.apps/grpc-svc-demo-client-deployment grpc-svc-demo-client=registry.test.com/grpc-svc-demo-client:0.0.2 --record
 
-kubectl exec -it sleep-8f795f47d-sfvth -n foo -c sleep -- curl -s  "grpc-svc-demo-client-service.grpc-demo.svc:8080/getSurfEleByTime?dataCode=SURF_CHN_MUL_MIN&times=20191113081500&elements=Station_Id_C,Datetime,TEM"
+kubectl exec -it sleep-7b84d7c4ff-wn7kr -n sample -c sleep -- curl -s  "grpc-svc-demo-client-service.grpc-demo.svc:8080/getSurfEleByTime?dataCode=SURF_CHN_MUL_MIN&times=20191113081500&elements=Station_Id_C,Datetime,TEM"
 
 返回结果如下：
 {"data": ["I0961,2019-11-13 08:15:00,14.3","S1813,2019-11-13 08:15:00,13.4","V6089,2019-11-13 08:15:00,999999.0"],"requestInfo": {"errorMessage": "query success!!","requestTime": "2020-07-10 07:19:53","responseTime": "2020-07-10 07:19:53","rowCount": 3,"colCount": 3}}
@@ -2058,6 +2058,9 @@ spec:
       coreDNSPluginImage: registry.test.com/istio/coredns-plugin:0.2-istio-1.1
       coreDNSTag: 1.6.2
 
+    pilot:
+      traceSampling: 50
+
     prometheus:
       hub: registry.test.com/prom
       tag: v2.15.1
@@ -2309,7 +2312,7 @@ helm install -n grafana grafana ./grafana
 获取密码
 kubectl get secret grafana-admin --namespace grafana -o jsonpath="{.data.GF_SECURITY_ADMIN_PASSWORD}" | base64 --decode
 
-安装Jaeger
+安装Jaeger(应先于Istio安装）
 kubectl create ns jaeger
 helm install -n jaeger jaeger ./jaeger
 
@@ -2583,3 +2586,210 @@ Test server health using Helm test:
 You can also consider installing the helm chart for phpldapadmin to manage this instance of OpenLDAP, or install Apache Directory Studio, and connect using kubectl port-forward.
 [root@localhost helm3]#
 
+设置Maven Wrapper使用Proxy
+
+vi .mvn/jvm.config
+
+-Dhttp.proxyHost=host 
+-Dhttp.proxyPort=port 
+-Dhttps.proxyHost=host 
+-Dhttps.proxyPort=port 
+-Dhttp.proxyUser=username 
+-Dhttp.proxyPassword=password
+
+[root@localhost bitnami]# helm install -n harbor harbor ./harbor
+NAME: harbor
+LAST DEPLOYED: Sat Aug 15 15:27:14 2020
+NAMESPACE: harbor
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+** Please be patient while the chart is being deployed **
+
+1. Get the Harbor URL:
+
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        Watch the status with: 'kubectl get svc --namespace harbor -w harbor'
+  export SERVICE_IP=$(kubectl get svc --namespace harbor harbor --template "{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}")
+  echo "Harbor URL: http://$SERVICE_IP/"
+
+2. Login with the following credentials to see your Harbor application
+
+  echo Username: "admin"
+  echo Password: $(kubectl get secret --namespace harbor harbor-core-envvars -o jsonpath="{.data.HARBOR_ADMIN_PASSWORD}" | base64 --decode)
+[root@localhost bitnami]#
+
+
+[root@localhost helm]# helm install -n argocd argocd ./argo-cd
+manifest_sorter.go:192: info: skipping unknown hook: "crd-install"
+manifest_sorter.go:192: info: skipping unknown hook: "crd-install"
+NAME: argocd
+LAST DEPLOYED: Mon Aug 17 08:46:53 2020
+NAMESPACE: argocd
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+In order to access the server UI you have the following options:
+
+1. kubectl port-forward service/argocd-server -n argocd 8080:443
+
+    and then open the browser on http://localhost:8080 and accept the certificate
+
+2. enable ingress in the values file `service.ingress.enabled` and either
+      - Add the annotation for ssl passthrough: https://github.com/argoproj/argo-cd/blob/master/docs/operator-manual/ingress.md#option-1-ssl-passthrough
+      - Add the `--insecure` flag to `server.extraArgs` in the values file and terminate SSL at your ingress: https://github.com/argoproj/argo-cd/blob/master/docs/operator-manual/ingress.md#option-2-multiple-ingress-objects-and-hosts
+
+
+After reaching the UI the first time you can login with username: admin and the password will be the
+name of the server pod. You can get the pod name by running:
+
+kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server -o name | cut -d'/' -f 2
+[root@localhost helm]#
+
+NOTES:
+The Prometheus server can be accessed via port 80 on the following DNS name from within your cluster:
+prometheus-server.prom.svc.cluster.local
+
+
+Get the Prometheus server URL by running these commands in the same shell:
+  export POD_NAME=$(kubectl get pods --namespace prom -l "app=prometheus,component=server" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace prom port-forward $POD_NAME 9090
+
+[root@localhost prometheus]# helm install -n prom prometheus ./prometheus
+NAME: prometheus
+LAST DEPLOYED: Mon Aug 17 11:48:47 2020
+NAMESPACE: prom
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+The Prometheus alertmanager can be accessed via port 80 on the following DNS name from within your cluster:
+prometheus-alertmanager.prom.svc.cluster.local
+
+
+Get the Alertmanager URL by running these commands in the same shell:
+  export POD_NAME=$(kubectl get pods --namespace prom -l "app=prometheus,component=alertmanager" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace prom port-forward $POD_NAME 9093
+#################################################################################
+######   WARNING: Pod Security Policy has been moved to a global property.  #####
+######            use .Values.podSecurityPolicy.enabled with pod-based      #####
+######            annotations                                               #####
+######            (e.g. .Values.nodeExporter.podSecurityPolicy.annotations) #####
+#################################################################################
+
+
+The Prometheus PushGateway can be accessed via port 9091 on the following DNS name from within your cluster:
+prometheus-pushgateway.prom.svc.cluster.local
+
+
+Get the PushGateway URL by running these commands in the same shell:
+  export POD_NAME=$(kubectl get pods --namespace prom -l "app=prometheus,component=pushgateway" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace prom port-forward $POD_NAME 9091
+
+For more information on running Prometheus, visit:
+https://prometheus.io/
+[root@localhost prometheus]# 
+
+安装Bitnami minio
+[root@localhost bitnami]# helm install -n minio minio ./minio
+NAME: minio
+LAST DEPLOYED: Tue Aug 18 17:12:47 2020
+NAMESPACE: minio
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+** Please be patient while the chart is being deployed **
+
+MinIO can be accessed via port 9000 on the following DNS name from within your cluster:
+
+   minio.minio.svc.cluster.local
+
+To get your credentials run:
+
+   export MINIO_ACCESS_KEY=$(kubectl get secret --namespace minio minio -o jsonpath="{.data.access-key}" | base64 --decode)
+   export MINIO_SECRET_KEY=$(kubectl get secret --namespace minio minio -o jsonpath="{.data.secret-key}" | base64 --decode)
+
+To connect to your MinIO server using a client:
+
+- Run a MinIO Client pod and append the desired command (e.g. 'admin info server'):
+
+   kubectl run --namespace minio minio-client \
+     --rm --tty -i --restart='Never' \
+     --env MINIO_SERVER_ACCESS_KEY=$MINIO_ACCESS_KEY \
+     --env MINIO_SERVER_SECRET_KEY=$MINIO_SECRET_KEY \
+     --env MINIO_SERVER_HOST=minio \
+     --image registry.test.com/bitnami/minio-client:2020.7.31-debian-10-r0 -- admin info server minio
+
+To access the MinIO web UI:
+
+- Get the MinIO URL:
+
+   echo "MinIO web URL: http://127.0.0.1:9000/minio"
+   kubectl port-forward --namespace minio svc/minio 9000:9000
+[root@localhost bitnami]#
+
+ACCESS_KEY:8lrWDsfB0P
+SECRET_KEY:TEF2Uf2M3mI4YThl2n5UGiR6g4aaxqekli5rPiAz
+
+下载新版
+[root@localhost 1.18.8]# kubeadm config images pull --kubernetes-version="1.18.8"
+W0819 13:29:33.269300    4612 configset.go:202] WARNING: kubeadm cannot validate component configs for API groups [kubelet.config.k8s.io kubeproxy.config.k8s.io]
+[config/images] Pulled k8s.gcr.io/kube-apiserver:v1.18.8
+[config/images] Pulled k8s.gcr.io/kube-controller-manager:v1.18.8
+[config/images] Pulled k8s.gcr.io/kube-scheduler:v1.18.8
+[config/images] Pulled k8s.gcr.io/kube-proxy:v1.18.8
+[config/images] Pulled k8s.gcr.io/pause:3.2
+[config/images] Pulled k8s.gcr.io/etcd:3.4.3-0
+[config/images] Pulled k8s.gcr.io/coredns:1.6.7
+[root@localhost 1.18.8]# 
+
+
+(base) [root@vm-centos ~]# kubeadm config images pull --kubernetes-version="1.19.0"
+W0907 14:48:32.082999    3387 configset.go:348] WARNING: kubeadm cannot validate component configs for API groups [kubelet.config.k8s.io kubeproxy.config.k8s.io]
+[config/images] Pulled k8s.gcr.io/kube-apiserver:v1.19.0
+[config/images] Pulled k8s.gcr.io/kube-controller-manager:v1.19.0
+[config/images] Pulled k8s.gcr.io/kube-scheduler:v1.19.0
+[config/images] Pulled k8s.gcr.io/kube-proxy:v1.19.0
+[config/images] Pulled k8s.gcr.io/pause:3.2
+[config/images] Pulled k8s.gcr.io/etcd:3.4.9-1
+[config/images] Pulled k8s.gcr.io/coredns:1.7.0
+(base) [root@vm-centos ~]# 
+
+root用户运行spyder时，需要设置环境变量
+export QTWEBENGINE_DISABLE_SANDBOX=1
+
+外部访问redis
+
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: redis-gateway
+spec:
+  selector:
+    istio: ingressgateway # use istio default ingress gateway
+  servers:
+  - port:
+      number: 6379
+      name: tcp-redis
+      protocol: TCP
+    hosts:
+    - "*"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: redis-vsvc
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - redis-gateway
+  tcp:
+  - route:
+    - destination:
+        port:
+          number: 6379
+        host: redis-cache-master.redis.svc.cluster.local
